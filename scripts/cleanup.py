@@ -33,9 +33,10 @@ for img in glance.images.list():
         print "Removing image %s" % (img.name)
         glance.images.delete(img.id)
 
-for fip in nova.floating_ips.list():
-    print "Removing floating ip %s" % fip.ip
-    nova.floating_ips.delete(fip)
+# Do not remove floating IPs for now.
+# for fip in nova.floating_ips.list():
+    # print "Removing floating ip %s" % fip.ip
+    # nova.floating_ips.delete(fip)
 
 os.chdir(tempfile.gettempdir())
 for temp in glob.glob("ofcloud*"):

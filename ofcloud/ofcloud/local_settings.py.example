@@ -1,0 +1,14 @@
+OPENFOAM_BASENAME       = 'http://openfoam.example.com'
+GRAFANA_BASENAME        = 'http://grafana.example.com'
+
+S3_ACCESS_KEY_ID        = 'your-s3-key'
+S3_SECRET_ACCESS_KEY    = 'your-s3-secret-key'
+S3_HOST                 = 's3-host'
+S3_PORT                 = 8443
+
+SNAP_SERVICE            = 'snap-api-root'
+INFLUX_DB_HOST          = 'influxdb-host'
+INFLUX_DB_PORT          = 8086
+INFLUX_DB_NAME          = 'snap'
+INFLUX_DB_USER          = 'admin'
+INFLUX_DB_PASS          = 'admin'
