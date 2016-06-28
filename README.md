@@ -1,10 +1,12 @@
-# Installing
+# OpenFOAM Cloud Backend
+ 
+## Installing
 
 Install required Python packages
 
     pip install -r requirements.txt
 
-Install 
+Install the following required packages
 
 * [capstan](https://drive.google.com/drive/folders/0B4qi_kpom5ITZ0RCYUlFQUJhUVU)
 * [snap](https://drive.google.com/drive/folders/0B4rwCneIeHMybmlENDNPYXJ3c3M)
@@ -32,7 +34,7 @@ Edit local settings to reflect your environment
     INFLUX_DB_USER          = 'admin'
     INFLUX_DB_PASS          = 'admin'
 
-# Running
+## Running
 
 Ensure snap, influxdb and grafana are running. Define a datasource for influxdb
 in grafana.
@@ -44,3 +46,10 @@ in grafana.
 Then launch the OpenFOAM backend
 
     python manage.py runserver 0.0.0.0:8008
+
+## Acknowledgements
+
+This project has been conducted within the RIA [MIKELANGELO
+project](https://www.mikelangelo-project.eu) (no.  645402), started in January
+2015, and co-funded by the European Commission under the H2020-ICT- 07-2014:
+Advanced Cloud Infrastructures and Services programme.
