@@ -14,7 +14,7 @@ class InstanceSerializer(serializers.ModelSerializer):
 
     def get_grafana_url(self, obj):
         return "%s/dashboard/db/snappy-openfoam?var-measurement=intel\/openfoam\/Ux\/initial&var-measurement=intel\/openfoam\/Uy\/initial&var-measurement=intel\/openfoam\/Uz\/initial&var-source=%s" % (
-        settings.GRAFANA_BASENAME, obj.ip)
+            settings.GRAFANA_BASENAME, obj.ip)
 
         # return 'http://10.211.55.101:3000/dashboard/db/openfoam?var-experiment=%s&var-parameter=Ux_0&var-parameter=Uy_0&var-parameter=Uz_0' % obj.name
 
@@ -27,5 +27,5 @@ class SimulationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = models.Simulation
-        fields = ('id', 'simulation_name', 'image', 'flavor',
+        fields = ('id', 'simulation_name', 'image', 'flavor', 'solver',
                   'container_name', 'input_data_object', 'cases', 'instances')

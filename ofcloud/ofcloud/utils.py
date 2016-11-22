@@ -134,7 +134,8 @@ def launch_simulation(config):
            "--author", env['OS_TENANT_NAME']]
 
     # We have to include the required packages in the command.
-    for d in config['deps']:
+    deps = resolve_simulation_depencencies(config['solver'])
+    for d in deps:
         cmd.append("--require")
         cmd.append(d)
 
@@ -153,6 +154,7 @@ def launch_simulation(config):
         "capstan", "package", "compose",
         "--size", "500M",
         "--run", "--redirect=/case/run.log /cli/cli.so",
+        "--pull-missing",
         image_name])
     # Wait for the image to be built.
     p.wait()
@@ -175,7 +177,7 @@ def launch_simulation(config):
         print "Creating required instance %s" % (config['project_name'])
     else:
         print "Creating required instances %s-1...%s-%d" % (
-        config['project_name'], config['project_name'], server_count)
+            config['project_name'], config['project_name'], server_count)
 
     nova.servers.create(name=config['project_name'],
                         image=of_image,
@@ -295,3 +297,25 @@ def destroy_simulation(simulation):
             snap_api.stop_openfoam_task(instance.snap_task_id)
         except:
             print "Instance not found"
+
+
+def resolve_simulation_depencencies(solver):
+    solver_dependencies = {
+        "openfoam.pimplefoam": "eu.mikelangelo-project.openfoam.pimplefoam",
+        "openfoam.pisofoam": "eu.mikelangelo-project.openfoam.pisofoam",
+        "openfoam.poroussimplefoam": "eu.mikelangelo-project.openfoam.poroussimplefoam",
+        "openfoam.potentialfoam": "eu.mikelangelo-project.openfoam.potentialfoam",
+        "openfoam.rhoporoussimplefoam": "eu.mikelangelo-project.openfoam.rhoporoussimplefoam",
+        "openfoam.rhosimplefoam": "eu.mikelangelo-project.openfoam.rhosimplefoam",
+        "openfoam.simplefoam": "eu.mikelangelo-project.openfoam.simplefoam"
+    }
+
+    try:
+        return [
+            solver_dependencies[solver],
+            "eu.mikelangelo-project.openfoam.core",
+            "eu.mikelangelo-project.osv.cli"
+        ]
+    except KeyError:
+        print "Solver %s not found, was expecting one of: %s" % (solver, solver_dependencies.keys())
+        raise

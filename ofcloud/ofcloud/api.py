@@ -28,29 +28,24 @@ class SimulationViewSet(viewsets.ModelViewSet):
             "project_name": serializer.data['simulation_name'],
             "image": serializer.data['image'],
             "flavor": serializer.data['flavor'],
-
+            "solver": serializer.data['solver'],
             "container": serializer.data['container_name'],
             "input_case": serializer.data['input_data_object'],
-
-            "deps": [
-                "eu.mikelangelo-project.openfoam.simplefoam",
-                "eu.mikelangelo-project.openfoam.core",
-                "eu.mikelangelo-project.osv.cli"
-            ],
-
             "cases": cases
         }
 
-        instances = launch_simulation(simulation_config)
+        try:
+            instances = launch_simulation(simulation_config)
+            for instance in instances:
+                simulation.instance_set.create(name=instance['name'],
+                                               config=instance['config'],
+                                               ip=instance['ip'],
+                                               instance_id=instance['instance_id'],
+                                               snap_task_id=instance['snap_task_id'])
 
-        for instance in instances:
-            simulation.instance_set.create(name=instance['name'],
-                                           config=instance['config'],
-                                           ip=instance['ip'],
-                                           instance_id=instance['instance_id'],
-                                           snap_task_id=instance['snap_task_id'])
-
-        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+            return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+        except KeyError:
+            return Response(serializer.data, status=status.HTTP_400_BAD_REQUEST)
 
     def destroy(self, request, pk=None):
         simulation = self.get_object()
