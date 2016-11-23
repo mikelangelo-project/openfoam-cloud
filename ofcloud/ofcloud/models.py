@@ -1,5 +1,6 @@
 from django.db import models
 
+
 class Simulation(models.Model):
     simulation_name = models.CharField(max_length=200)
     image = models.CharField(max_length=100)

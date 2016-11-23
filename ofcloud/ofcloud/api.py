@@ -5,7 +5,6 @@ from rest_framework.response import Response
 
 from ofcloud.models import Simulation, Instance
 from ofcloud.serializers import SimulationSerializer, InstanceSerializer
-
 from ofcloud.utils import launch_simulation, destroy_simulation
 
 
@@ -23,24 +22,24 @@ class SimulationViewSet(viewsets.ModelViewSet):
         try:
             cases = json.loads(serializer.data['cases'])
         except:
-            cases = [{ "name": serializer.data['simulation_name'], "updates": {}}]
+            cases = [{"name": serializer.data['simulation_name'], "updates": {}}]
 
         simulation_config = {
-                "project_name": serializer.data['simulation_name'],
-                "image": serializer.data['image'],
-                "flavor": serializer.data['flavor'],
+            "project_name": serializer.data['simulation_name'],
+            "image": serializer.data['image'],
+            "flavor": serializer.data['flavor'],
 
-                "container": serializer.data['container_name'],
-                "input_case": serializer.data['input_data_object'],
+            "container": serializer.data['container_name'],
+            "input_case": serializer.data['input_data_object'],
 
-                "deps": [
-                    "eu.mikelangelo-project.openfoam.simplefoam", 
-                    "eu.mikelangelo-project.openfoam.core", 
-                    "eu.mikelangelo-project.osv.cli"
-                    ],
+            "deps": [
+                "eu.mikelangelo-project.openfoam.simplefoam",
+                "eu.mikelangelo-project.openfoam.core",
+                "eu.mikelangelo-project.osv.cli"
+            ],
 
-                "cases": cases
-                }
+            "cases": cases
+        }
 
         instances = launch_simulation(simulation_config)
 
@@ -61,7 +60,6 @@ class SimulationViewSet(viewsets.ModelViewSet):
         self.perform_destroy(simulation)
 
         return Response(status=status.HTTP_204_NO_CONTENT)
-
 
 
 class InstanceViewSet(viewsets.ModelViewSet):

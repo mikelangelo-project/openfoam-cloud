@@ -1,0 +1,13 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+#vi temp files
+.*.sw*
+
+#idea files
+.idea/
+
+ofcloud/db.sqlite3
+ofcloud/ofcloud/local_settings.py

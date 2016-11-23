@@ -1,6 +1,6 @@
 from django.conf import settings
-
 from rest_framework import serializers
+
 from ofcloud import models
 
 
@@ -13,7 +13,8 @@ class InstanceSerializer(serializers.ModelSerializer):
         fields = ('id', 'name', 'config', 'ip', 'instance_id', 'grafana_url', 'download_case_url')
 
     def get_grafana_url(self, obj):
-        return "%s/dashboard/db/snappy-openfoam?var-measurement=intel\/openfoam\/Ux\/initial&var-measurement=intel\/openfoam\/Uy\/initial&var-measurement=intel\/openfoam\/Uz\/initial&var-source=%s"  % (settings.GRAFANA_BASENAME, obj.ip)
+        return "%s/dashboard/db/snappy-openfoam?var-measurement=intel\/openfoam\/Ux\/initial&var-measurement=intel\/openfoam\/Uy\/initial&var-measurement=intel\/openfoam\/Uz\/initial&var-source=%s" % (
+        settings.GRAFANA_BASENAME, obj.ip)
 
         # return 'http://10.211.55.101:3000/dashboard/db/openfoam?var-experiment=%s&var-parameter=Ux_0&var-parameter=Uy_0&var-parameter=Uz_0' % obj.name
 
@@ -26,5 +27,5 @@ class SimulationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = models.Simulation
-        fields = ('id', 'simulation_name', 'image', 'flavor', 
-                'container_name', 'input_data_object', 'cases', 'instances')
+        fields = ('id', 'simulation_name', 'image', 'flavor',
+                  'container_name', 'input_data_object', 'cases', 'instances')

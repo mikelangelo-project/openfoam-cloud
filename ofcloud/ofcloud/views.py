@@ -4,7 +4,6 @@ import tarfile
 import tempfile
 
 from django.http import HttpResponse
-# from django.core.servers.basehttp import FileWrapper
 
 from ofcloud.models import Instance
 from osv.vm import VM
@@ -43,5 +42,3 @@ def download_instance_log(request, instance_id):
     response = HttpResponse(content)
 
     return response
-
-

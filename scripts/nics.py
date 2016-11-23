@@ -1,23 +1,18 @@
 from os import environ as env
-import os
-import shutil
-import glob
-import tempfile
-import novaclient.client as nvclient
-import glanceclient.v2.client as glclient
 
-from keystoneauth1.identity import v2
+import novaclient.client as nvclient
 from keystoneauth1 import session
+from keystoneauth1.identity import v2
 
 IMAGE = "openfoam.cases"
 FLAVOR = "of.small"
 
 # Authenticate using ENV variables
 auth = v2.Password(
-        auth_url=env['OS_AUTH_URL'], 
-        username=env['OS_USERNAME'], 
-        password=env['OS_PASSWORD'], 
-        tenant_id=env['OS_TENANT_ID'])
+    auth_url=env['OS_AUTH_URL'],
+    username=env['OS_USERNAME'],
+    password=env['OS_PASSWORD'],
+    tenant_id=env['OS_TENANT_ID'])
 # Open auth session
 sess = session.Session(auth=auth)
 

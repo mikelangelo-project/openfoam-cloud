@@ -1,36 +1,34 @@
-from django.conf import settings
-
-from os import environ as env, path
 import json
-import os, os.path
+import os
+import os.path
 import re
 import subprocess
-import tempfile
 import tarfile
+import tempfile
 import time
-import keystoneclient.v2_0.client as ksclient
-import glanceclient.v2.client as glclient
-import novaclient.client as nvclient
-import swiftclient as swclient
-import requests
-
-from keystoneauth1.identity import v2
-from keystoneauth1 import session
-
-from snap import api as snap_api
+from os import environ as env, path
 
 import boto
 import boto.s3.connection
+import glanceclient.v2.client as glclient
+import keystoneclient.v2_0.client as ksclient
+import novaclient.client as nvclient
+import requests
+from django.conf import settings
+from keystoneauth1 import session
+from keystoneauth1.identity import v2
+
+from snap import api as snap_api
 
 
 def update_case(case_path, updates):
-    input_files = {} 
+    input_files = {}
 
     # First, get a list of files that need to be modified
     for key in updates:
         fileEndIndex = key.rfind('/')
         filepath = key[0:fileEndIndex]
-        variable = key[fileEndIndex+1:]
+        variable = key[fileEndIndex + 1:]
 
         if not filepath in input_files:
             input_files[filepath] = {}
@@ -59,6 +57,7 @@ def update_case(case_path, updates):
 
     return output_files
 
+
 def get_floating_ip(nova):
     # Find the first available floating IP
     for fip in nova.floating_ips.list():
@@ -76,10 +75,10 @@ def rest_api_for(ip):
 def launch_simulation(config):
     # Authenticate using ENV variables
     auth = v2.Password(
-            auth_url=env['OS_AUTH_URL'], 
-            username=env['OS_USERNAME'], 
-            password=env['OS_PASSWORD'], 
-            tenant_id=env['OS_TENANT_ID'])
+        auth_url=env['OS_AUTH_URL'],
+        username=env['OS_USERNAME'],
+        password=env['OS_PASSWORD'],
+        tenant_id=env['OS_TENANT_ID'])
     # Open auth session
     sess = session.Session(auth=auth)
 
@@ -88,29 +87,29 @@ def launch_simulation(config):
     glance = glclient.Client(session=sess)
     nova = nvclient.Client("2", session=sess)
     # swift = swclient.Connection(
-            # user=env['OS_USERNAME'],
-            # key=env['OS_PASSWORD'],
-            # authurl=env['OS_AUTH_URL'],
-            # auth_version="2",
-            # tenant_name=env['OS_TENANT_NAME'])
+    # user=env['OS_USERNAME'],
+    # key=env['OS_PASSWORD'],
+    # authurl=env['OS_AUTH_URL'],
+    # auth_version="2",
+    # tenant_name=env['OS_TENANT_NAME'])
 
     # # Try to download the given input case from Swift.
     # obj = swift.get_object(config['container'], config['input_case'])
 
     s3_conn = boto.connect_s3(
-            aws_access_key_id = settings.S3_ACCESS_KEY_ID,
-            aws_secret_access_key = settings.S3_SECRET_ACCESS_KEY,
-            host = settings.S3_HOST,
-            port = settings.S3_PORT,
-            calling_format = boto.s3.connection.OrdinaryCallingFormat(),
-            )
+        aws_access_key_id=settings.S3_ACCESS_KEY_ID,
+        aws_secret_access_key=settings.S3_SECRET_ACCESS_KEY,
+        host=settings.S3_HOST,
+        port=settings.S3_PORT,
+        calling_format=boto.s3.connection.OrdinaryCallingFormat(),
+    )
 
     temppath = tempfile.mkdtemp(prefix='ofcloud-')
     casepath = path.join(temppath, "case")
 
     os.makedirs(casepath)
     # with open(casefile, 'w') as f:
-        # f.write(obj[1])
+    # f.write(obj[1])
 
     # Get the bucket for the input data.
     bucket = s3_conn.get_bucket(config['container'])
@@ -130,9 +129,9 @@ def launch_simulation(config):
 
     # Initialise MPM package
     cmd = ["capstan", "package", "init",
-            "--name", config['project_name'],
-            "--title", config['project_name'],
-            "--author", env['OS_TENANT_NAME']]
+           "--name", config['project_name'],
+           "--title", config['project_name'],
+           "--author", env['OS_TENANT_NAME']]
 
     # We have to include the required packages in the command.
     for d in config['deps']:
@@ -159,8 +158,8 @@ def launch_simulation(config):
     p.wait()
 
     # Import image into Glance
-    mpm_image = os.path.expanduser(os.path.join("~", ".capstan", "repository", 
-        image_name, "%s.qemu" % (os.path.basename(temppath))))
+    mpm_image = os.path.expanduser(os.path.join("~", ".capstan", "repository",
+                                                image_name, "%s.qemu" % (os.path.basename(temppath))))
 
     print "Uploading image %s to Glance" % (config['project_name'])
     image = glance.images.create(name=config['project_name'], disk_format="qcow2", container_format="bare")
@@ -175,14 +174,15 @@ def launch_simulation(config):
     if server_count == 1:
         print "Creating required instance %s" % (config['project_name'])
     else:
-        print "Creating required instances %s-1...%s-%d" % (config['project_name'], config['project_name'], server_count)
+        print "Creating required instances %s-1...%s-%d" % (
+        config['project_name'], config['project_name'], server_count)
 
-    nova.servers.create(name=config['project_name'], 
-            image=of_image, 
-            flavor=flavor, 
-            min_count=server_count, 
-            max_count=server_count
-            )
+    nova.servers.create(name=config['project_name'],
+                        image=of_image,
+                        flavor=flavor,
+                        min_count=server_count,
+                        max_count=server_count
+                        )
 
     # Ensure that all required instances are active.
     active_count = 0
@@ -207,7 +207,6 @@ def launch_simulation(config):
         print "Some instances failed to boot"
         # TODO: stop & cleanup
 
-
     # Remove the uploaded image as it is no longer required
     glance.images.delete(image.id)
 
@@ -223,38 +222,6 @@ def launch_simulation(config):
 
     print "Wait 5s for the router to setup floating IPs"
     time.sleep(5)
-
-    # print "Associating floating IPs"
-    # rest_apis = {}
-    # for instance in nova.servers.list(search_opts={'name': config['project_name']}):
-        # # Since devstack has some issues with nova-network, we have to try this several times
-        # prev_floating_ip = None
-        # for i in range(0, 5):
-            # floating_ip = get_floating_ip(nova)
-            # instance.add_floating_ip(floating_ip)
-
-            # if prev_floating_ip:
-                # nova.floating_ips.delete(prev_floating_ip)
-                # prev_floating_ip = None
-
-            # api_url = "http://%s:8000" % (floating_ip.ip)
-
-            # # Test the connection
-            # try:
-                # response = requests.get(url=api_url,
-                        # timeout=(0.1, 10))
-
-                # print "Instance %s accessible at %s" % (instance.name, floating_ip.ip)
-                # rest_apis[instance.id] = api_url
-
-                # break
-
-            # except:
-# #                 # Release floating IP
-# #                 nova.floating_ips.delete(floating_ip)
-                # prev_floating_ip = floating_ip
-
-                # time.sleep(0.5)
 
     if len(instance_ips) != server_count:
         print "Some instances failed to obtain valid IP"
@@ -281,10 +248,10 @@ def launch_simulation(config):
         print "\t\tsetting up the execution environment"
 
         # Now we need to setup some env variables.
-        requests.post("%s/env/OPENFOAM_CASE" % instance_api, 
-                data={ "val": '%s-%s' % (config['project_name'], config['cases'][idx]['name']) })
-        requests.post("%s/env/TENANT" % instance_api, data={ "val": env['OS_TENANT_NAME'] })
-        requests.post("%s/env/WM_PROJECT_DIR" % instance_api, data={ "val": '/openfoam' })
+        requests.post("%s/env/OPENFOAM_CASE" % instance_api,
+                      data={"val": '%s-%s' % (config['project_name'], config['cases'][idx]['name'])})
+        requests.post("%s/env/TENANT" % instance_api, data={"val": env['OS_TENANT_NAME']})
+        requests.post("%s/env/WM_PROJECT_DIR" % instance_api, data={"val": '/openfoam'})
 
         print "Starting snap collector"
         t = snap_api.create_openfoam_task(instance_ips[instance.id])
@@ -296,15 +263,13 @@ def launch_simulation(config):
             'ip': instance_ips[instance.id],
             'instance_id': instance.id,
             'snap_task_id': t
-            })
-
+        })
 
     print "Starting OpenFOAM simulations"
     for idx, instance in enumerate(nova.servers.list(search_opts={'name': config['project_name']})):
         instance_api = rest_api_for(instance_ips[instance.id])
 
-        requests.put("%s/app/" % instance_api, data={ "command": "/usr/bin/simpleFoam -case /case" })
-    
+        requests.put("%s/app/" % instance_api, data={"command": "/usr/bin/simpleFoam -case /case"})
 
     return instances
 
@@ -312,10 +277,10 @@ def launch_simulation(config):
 def destroy_simulation(simulation):
     # Authenticate using ENV variables
     auth = v2.Password(
-            auth_url=env['OS_AUTH_URL'], 
-            username=env['OS_USERNAME'], 
-            password=env['OS_PASSWORD'], 
-            tenant_id=env['OS_TENANT_ID'])
+        auth_url=env['OS_AUTH_URL'],
+        username=env['OS_USERNAME'],
+        password=env['OS_PASSWORD'],
+        tenant_id=env['OS_TENANT_ID'])
     # Open auth session
     sess = session.Session(auth=auth)
 

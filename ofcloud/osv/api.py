@@ -5,14 +5,13 @@ __author__ = 'justin_cinkelj'
 REST api to access OSv VM.
 '''
 
-from osv import VM
 import settings
 import requests
-#import requests.exceptions
+# import requests.exceptions
 import ast
 from urllib import urlencode
 import logging
-from distutils.version import LooseVersion, StrictVersion
+from distutils.version import StrictVersion
 from time import sleep
 import simplejson
 import sys
@@ -108,7 +107,7 @@ class BaseApi:
 def env_var_split(line):
     ii = line.find('=')
     kk = line[:ii]
-    vv = line[ii+1:]
+    vv = line[ii + 1:]
     return kk, vv
 
 
@@ -157,7 +156,7 @@ class App(BaseApi):
         self._name = name
 
     def run(self):
-        assert(self._name)
+        assert (self._name)
         params = {'command': self._name}
         self.http_put(params)
 
@@ -200,10 +199,12 @@ class Os(BaseApi):
             log.info('Error should be ReadTimeout, msg %s', ex.message)
             pass
 
+
 class File(BaseApi):
     """
     List and download directories etc.
     """
+
     def __init__(self, vm):
         BaseApi.__init__(self, vm)
         self.base_path = '/file/'
@@ -240,7 +241,7 @@ class File(BaseApi):
                     continue
                 if path == '/' and subdir_name in ['dev', 'proc']:
                     # do not 'download' /dev/urandom etc
-                    dev_dir =  os.path.join(dest, subdir_name)
+                    dev_dir = os.path.join(dest, subdir_name)
                     if os.path.exists(dev_dir):
                         os.removedirs(dev_dir)
                     log.info('Only mkdir %s on destination side', dev_dir)
@@ -253,11 +254,12 @@ class File(BaseApi):
                 log.debug('GET file %s/%s', path, file_name)
                 self._get_file(os.path.join(path, file_name), os.path.join(dest, file_name))
             else:
-                log.error('Unknown type %s (json data %s)', entry['type'], simplejson.dumps(entry) )
+                log.error('Unknown type %s (json data %s)', entry['type'], simplejson.dumps(entry))
 
     '''
     Copy file or directory from VM at path src, to host to path dest.
     '''
+
     def get(self, src, dest=None):
         params = {'op': 'LISTSTATUS'}
         try:
@@ -290,8 +292,9 @@ class File(BaseApi):
         for src in src:
             src_filename = os.path.split(src.rstrip(os.path.sep))[1]  # name of src file or directory
             if dest_is_dir:
-                dest_filename = os.path.join(dest, src_filename) # name of dest file or directory
+                dest_filename = os.path.join(dest, src_filename)  # name of dest file or directory
             else:
                 dest_filename = dest
             self.get(src, dest_filename)
+
 ##

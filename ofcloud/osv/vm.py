@@ -7,16 +7,16 @@ import os
 import math
 from uuid import uuid4
 import settings
-from subprocess import Popen, check_call
+from subprocess import check_call
 from time import sleep
 from random import randint
-import pipes
 import shutil
 import sys
 import libvirt
 from jinja2 import Environment, PackageLoader
 import argparse
 import datetime
+
 
 # for '192.168.1.2/24' return '192.168.1.2' and '255.255.255.0'
 def cidr_to_ip_mask(cidr):
@@ -38,6 +38,7 @@ class VMParam:
     '''
     Save parameters. Also create copy of VM image for this particular VM.
     '''
+
     def __init__(self,
                  command='',
                  image='',
@@ -103,7 +104,7 @@ class VMParam:
             self._net_mode = VMParam.NET_NONE
 
         if net_mac == 'rand':
-            self._net_mac = '52:54:00:%02x:%02x:%02x' % (randint(0,255), randint(0,255), randint(0,255))
+            self._net_mac = '52:54:00:%02x:%02x:%02x' % (randint(0, 255), randint(0, 255), randint(0, 255))
         elif net_mac:
             self._net_mac = net_mac
         else:
@@ -127,6 +128,7 @@ class VMParam:
     Build command for run.py.
     The full command line for OSv VM (including network settings) is stored in _full_command_line.
     '''
+
     def _build_run_command(self):
         log = logging.getLogger(__name__)
         arg = ['./scripts/run.py']
@@ -174,9 +176,8 @@ class VMParam:
         elif self._command:
             full_command = self._command
         else:
-            full_command =  settings.OSV_CLI_APP
+            full_command = settings.OSV_CLI_APP
         if full_command:
-            #arg.extend(['-e', pipes.quote(full_command)])
             arg.extend(['-e', full_command])
         self._full_command_line = full_command
 
@@ -188,6 +189,7 @@ class VM:
     Create new VM.
     net_ip is in CIDR notation 'ip/bits'
     """
+
     def __init__(self, **kwargs):
         self._param = VMParam(**kwargs)
 
@@ -212,9 +214,8 @@ class VM:
     def connect_to_existing(cls, ip, name=''):
         vm = VM()
         vm._ip = ip.split('/')[0]  # ip with or without netmask
-        if(name):
+        if (name):
             conn = VM._libvirt_conn()
-            #conn = libvirt.open("qemu+ssh://root@192.168.122.11/system")
             vm._vm = conn.lookupByName(name)
         return vm
 
@@ -228,16 +229,18 @@ class VM:
         # get full_command_line
         run_arg = self._param._build_run_command()
         full_command_line = self._param._full_command_line
-        ## full_command_line = '--verbose ' + full_command_line  # run OSv VM in verbose mode
+        # full_command_line = '--verbose ' + full_command_line  # run OSv VM in verbose mode
         # image edit.
-        cmd = [os.path.join(settings.OSV_SRC, 'scripts/imgedit.py'), 'setargs', self._param._in_use_image, full_command_line]
+        cmd = [os.path.join(settings.OSV_SRC, 'scripts/imgedit.py'), 'setargs', self._param._in_use_image,
+               full_command_line]
         print('Set cmd: %s' % ' '.join(cmd))
         check_call(cmd)
 
         name = str(uuid4())[:8]
         # what are valid cache/io mode combinations
         #   none + native, not available on all hosts/filesystems (err: file system may not support O_DIRECT)
-        #   unsafe + native - rejected by libvirt, err: unsupported configuration: native I/O needs either no disk cache or directsync cache mode, QEMU will fallback to aio=threads
+        #   unsafe + native - rejected by libvirt, err: unsupported configuration: native I/O needs either no disk
+        #   cache or directsync cache mode, QEMU will fallback to aio=threads
         #   unsafe + threads - is ok
         if self._param._unsafe_cache:
             image_cache_mode, image_io_mode = 'unsafe', 'threads'
@@ -260,7 +263,7 @@ class VM:
         tmpl_env = Environment(loader=PackageLoader('lin_proxy', 'templates'))
         template = tmpl_env.get_template('osv-libvirt.template.xml')
         xml = template.render(vm=vm_param)
-        #print xml
+        # print xml
 
         # make console_log file, so that we have permission to read it.
         open(self._console_log, 'w').close()
@@ -296,7 +299,7 @@ class VM:
                 self.os_api().shutdown()
                 # check
                 ii = 10.0
-                while ii>0:
+                while ii > 0:
                     if not self._vm.isActive():
                         log.info('VM %s terminated', self._vm.name())
                         break
@@ -340,7 +343,7 @@ class VM:
                     but 'random: device unblocked.' might be there too.
                     or 'random' garbage can be prepend ('ESC[6n/# ')
                     '''
-                    if cur_line[:3] =='/# ' or cur_line[-3:] == '/# ':
+                    if cur_line[:3] == '/# ' or cur_line[-3:] == '/# ':
                         log.info('child %s cmd_prompt is up', self._log_name())
                         self._child_cmdline_up = True
                 if not self._ip:
@@ -365,7 +368,8 @@ class VM:
     When command prompt shows, also http-server REST api should be fully up (but we anyway as first REST api call do a dummy
     http GET, "just in case").
     """
-    def wait_cmd_prompt(self, Td = 5, Td2 = 0.1):
+
+    def wait_cmd_prompt(self, Td=5, Td2=0.1):
         log = logging.getLogger(__name__)
         stdout_data = ''
         if self._param._command and self._param._command.find(settings.OSV_CLI_APP) == -1:
@@ -390,7 +394,8 @@ class VM:
     Wait on VM to get IP from DHCP.
     If static IP configuration is used, return success immediately.
     """
-    def wait_ip(self, Td = 5, Td2 = 0.1):
+
+    def wait_ip(self, Td=5, Td2=0.1):
         log = logging.getLogger(__name__)
         stdout_data = ''
         if self._ip:
@@ -412,7 +417,8 @@ class VM:
     """
     Wait on VM to be fully up and operational.
     """
-    def wait_up(self, Td = 5, Td2 = 0.1):
+
+    def wait_up(self, Td=5, Td2=0.1):
         log = logging.getLogger(__name__)
         stdout_data = ''
         if self._vm:
@@ -460,18 +466,18 @@ class VM:
         api_instance = api.File(self)
         return api_instance
 
-# logging.basicConfig(level=logging.DEBUG)
-
 
 '''
 For perm = '664', return 'rw-rw-r--'
 '''
+
+
 def _perm_num_to_str(perm):
-    map=['---', '--x', '-w-', '-wx', 'r--', 'r-x', 'rw-', 'rwx']
+    map = ['---', '--x', '-w-', '-wx', 'r--', 'r-x', 'rw-', 'rwx']
     ret = ''
     # special case: '0'
     if perm == '0':
-        return '---'*3
+        return '---' * 3
     for nn in perm:
         ret += map[int(nn)]
     return ret
@@ -507,7 +513,6 @@ if __name__ == '__main__':
     parser.add_argument('ip', help='VM IP address.')
     parser.add_argument('cmd', choices=['ls', 'get'], help='Command to execute.')
     args, cmd_argv = parser.parse_known_args(sys.argv[1:])  # skip $0 == vm.py filename
-    # print(args)
 
     # special case: python -m osv.vm help get
     if args.ip in ['-h', 'help']:
@@ -518,7 +523,6 @@ if __name__ == '__main__':
         vm = VM.connect_to_existing(args.ip)
         file_api = vm.file_api()
 
-    # ---------------------------------------------------------------------------------------------
     if args.cmd in ['get']:
         parser2 = argparse.ArgumentParser(prog='osv.vm IP get')
         parser2.add_argument('src', nargs='+', help='VM source file/directory to copy from')
@@ -527,30 +531,10 @@ if __name__ == '__main__':
 
         file_api.download_directory(args2.src, args2.dest)
 
-        # # multiple src files/directories, dest should be a dir.
-        # # or dest ends with '/' - cp to dir was requested
-        # dest_is_dir = len(args2.src) > 1 or args2.dest.endswith(os.path.sep)
-        # if dest_is_dir:
-            # if os.path.exists(args2.dest):
-                # if os.path.isdir(args2.dest):
-                    # pass  # all ok
-                # else:
-                    # print('Destination %s is exists, but is not a directory', args2.dest, file=sys.stderr)
-                    # exit(1)
-            # else:
-                # os.mkdir(args2.dest)
-        # for src in args2.src:
-            # src_filename = os.path.split(src.rstrip(os.path.sep))[1]  # name of src file or directory
-            # if dest_is_dir:
-                # dest_filename = os.path.join(args2.dest, src_filename) # name of dest file or directory
-            # else:
-                # dest_filename = args2.dest
-            # file_api.get(src, dest_filename)
-    # ---------------------------------------------------------------------------------------------
     elif args.cmd in ['ls']:
         parser2 = argparse.ArgumentParser(prog='osv.vm IP ls')
-        parser2.add_argument('-l', dest = 'long', action='store_true', help='Long listing format')
-        parser2.add_argument('-a', dest = 'all', action='store_true', help='Show . and ..')
+        parser2.add_argument('-l', dest='long', action='store_true', help='Long listing format')
+        parser2.add_argument('-a', dest='all', action='store_true', help='Show . and ..')
         parser2.add_argument('files', nargs='+')
         args2 = parser2.parse_args(cmd_argv)
         header_fmt = '%s:'
@@ -563,7 +547,7 @@ if __name__ == '__main__':
             dir_info = file_api._list_dir(dir)  # _list_dir returns info for dir, but [] for file :/
             if not dir_info:
                 # must be file
-                file_dirname, file_filename= os.path.split(dir)
+                file_dirname, file_filename = os.path.split(dir)
                 dir_info = file_api._list_dir(file_dirname)
                 for dir_info_cur in dir_info:
                     if dir_info_cur['pathSuffix'] == file_filename:
@@ -584,13 +568,12 @@ if __name__ == '__main__':
                         type = 'd'
                     perm = _perm_num_to_str(di['permission'])
                     replica = di['replication']
-                    # print(''  di['owner'], di['group'], )
                     # accessTime, modificationTime
                     fmt = "%Y-%m-%d %H:%M:%S"
                     tt = datetime.datetime.fromtimestamp(di['modificationTime']).strftime(fmt)
                     length = di['length']
-                    #print('mod time = %s', tt)
-                    print('%s%s %2d %s %s %6d %s %s' % (type, perm, replica, di['owner'], di['group'], length, tt, name))
+                    print(
+                        '%s%s %2d %s %s %6d %s %s' % (type, perm, replica, di['owner'], di['group'], length, tt, name))
                 else:
                     print('%s ' % (name))
     # ---------------------------------------------------------------------------------------------
