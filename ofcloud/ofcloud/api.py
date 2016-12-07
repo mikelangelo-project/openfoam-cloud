@@ -29,6 +29,7 @@ class SimulationViewSet(viewsets.ModelViewSet):
             "image": serializer.data['image'],
             "flavor": serializer.data['flavor'],
             "solver": serializer.data['solver'],
+            "instance_count": serializer.data['instance_count'],
             "container": serializer.data['container_name'],
             "input_case": serializer.data['input_data_object'],
             "cases": cases

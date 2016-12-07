@@ -27,5 +27,5 @@ class SimulationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = models.Simulation
-        fields = ('id', 'simulation_name', 'image', 'flavor', 'solver',
+        fields = ('id', 'simulation_name', 'image', 'flavor', 'solver', 'instance_count',
                   'container_name', 'input_data_object', 'cases', 'instances')

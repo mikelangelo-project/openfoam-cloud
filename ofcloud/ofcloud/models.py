@@ -6,6 +6,7 @@ class Simulation(models.Model):
     image = models.CharField(max_length=100)
     flavor = models.CharField(max_length=100)
     solver = models.CharField(max_length=100, default='')
+    instance_count = models.IntegerField(default=1)
 
     container_name = models.CharField(max_length=50)
     input_data_object = models.CharField(max_length=100)
