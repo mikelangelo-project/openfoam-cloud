@@ -134,7 +134,9 @@ def launch_simulation(config):
            "--author", env['OS_TENANT_NAME']]
 
     # We have to include the required packages in the command.
-    deps = resolve_simulation_depencencies(config['solver'])
+    solver_deps, solver_so = get_solver_config()[config['solver']]
+    deps = solver_deps + get_common_deps()
+
     for d in deps:
         cmd.append("--require")
         cmd.append(d)
@@ -268,10 +270,11 @@ def launch_simulation(config):
         })
 
     print "Starting OpenFOAM simulations"
+    solver_command = "/usr/bin/%s -case /case" % solver_so
     for idx, instance in enumerate(nova.servers.list(search_opts={'name': config['project_name']})):
         instance_api = rest_api_for(instance_ips[instance.id])
 
-        requests.put("%s/app/" % instance_api, data={"command": "/usr/bin/simpleFoam -case /case"})
+        requests.put("%s/app/" % instance_api, data={"command": solver_command})
 
     return instances
 
@@ -299,23 +302,28 @@ def destroy_simulation(simulation):
             print "Instance not found"
 
 
-def resolve_simulation_depencencies(solver):
-    solver_dependencies = {
-        "openfoam.pimplefoam": "eu.mikelangelo-project.openfoam.pimplefoam",
-        "openfoam.pisofoam": "eu.mikelangelo-project.openfoam.pisofoam",
-        "openfoam.poroussimplefoam": "eu.mikelangelo-project.openfoam.poroussimplefoam",
-        "openfoam.potentialfoam": "eu.mikelangelo-project.openfoam.potentialfoam",
-        "openfoam.rhoporoussimplefoam": "eu.mikelangelo-project.openfoam.rhoporoussimplefoam",
-        "openfoam.rhosimplefoam": "eu.mikelangelo-project.openfoam.rhosimplefoam",
-        "openfoam.simplefoam": "eu.mikelangelo-project.openfoam.simplefoam"
+def get_solver_config():
+    # Value for each solver consist of a tuple. The first tuple object is the dependency
+    # of the solver, the second one is the command with which we run the simulation using the selected solver.
+    return {
+        "openfoam.pimplefoam":
+            (["eu.mikelangelo-project.openfoam.pimplefoam"], "pimpleFoam.so"),
+        "openfoam.pisofoam":
+            (["eu.mikelangelo-project.openfoam.pisofoam"], "pisoFoam.so"),
+        "openfoam.poroussimplefoam":
+            (["eu.mikelangelo-project.openfoam.poroussimplefoam"], "poroussimpleFoam.so"),
+        "openfoam.potentialfoam":
+            (["eu.mikelangelo-project.openfoam.potentialfoam"], "potentialFoam.so"),
+        "openfoam.rhoporoussimplefoam":
+            (["eu.mikelangelo-project.openfoam.rhoporoussimplefoam"], "rhoporoussimpleFoam.so"),
+        "openfoam.rhosimplefoam":
+            (["eu.mikelangelo-project.openfoam.rhosimplefoam"], "rhosimpleFoam.so"),
+        "openfoam.simplefoam":
+            (["eu.mikelangelo-project.openfoam.simplefoam"], "simpleFoam.so")
     }
 
-    try:
-        return [
-            solver_dependencies[solver],
-            "eu.mikelangelo-project.openfoam.core",
-            "eu.mikelangelo-project.osv.cli"
-        ]
-    except KeyError:
-        print "Solver %s not found, was expecting one of: %s" % (solver, solver_dependencies.keys())
-        raise
+
+def get_common_deps():
+    return [
+        "eu.mikelangelo-project.osv.cli"
+    ]
