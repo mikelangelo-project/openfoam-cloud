@@ -1,3 +1,5 @@
+from enum import Enum
+
 from django.db import models
 
 
@@ -15,14 +17,18 @@ class Simulation(models.Model):
 
 
 class Instance(models.Model):
+    Status = Enum("Status", "INIT UP RUNNING")
+
     name = models.CharField(max_length=100)
     config = models.TextField(blank=True)
-    ip = models.TextField(max_length=15)
-    instance_id = models.TextField(max_length=100)
+    ip = models.TextField(max_length=15, blank=True)
+    instance_id = models.TextField(max_length=100, blank=True)
 
     simulation = models.ForeignKey(Simulation, on_delete=models.CASCADE)
 
-    snap_task_id = models.CharField(max_length=100)
+    snap_task_id = models.CharField(max_length=100, blank=True)
+
+    status = models.CharField(max_length=100, default=Status.INIT.name)
 
     class Meta:
         ordering = ('name',)

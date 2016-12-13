@@ -6,6 +6,7 @@ import subprocess
 import tarfile
 import tempfile
 import time
+import uuid
 from os import environ as env, path
 
 import boto
@@ -18,6 +19,7 @@ from django.conf import settings
 from keystoneauth1 import session
 from keystoneauth1.identity import v2
 
+from ofcloud.models import Instance
 from snap import api as snap_api
 
 
@@ -72,7 +74,35 @@ def rest_api_for(ip):
     return "http://%s:8000" % ip
 
 
-def launch_simulation(config):
+def create_simulation(simulation_serializer):
+    simulation = simulation_serializer.create(simulation_serializer.validated_data)
+
+    if not simulation.cases or len(simulation.cases) == 0:
+        simulation.cases = json.dumps([{"name": simulation.simulation_name, "updates": {}}])
+
+    instances = __create_simulation_instances(simulation)
+
+    for instance in instances:
+        simulation.instance_set.create(name=instance['name'],
+                                       config=instance['config'])
+
+    return simulation
+
+
+def __create_simulation_instances(simulation):
+    instances = []
+
+    simulation_cases = json.loads(simulation.cases)
+
+    for case in simulation_cases:
+        instances.append({
+            'name': '%s-%s' % (simulation.simulation_name, case['name']),
+            'config': json.dumps(case['updates'])
+        })
+    return instances
+
+
+def launch_simulation(simulation):
     # Authenticate using ENV variables
     auth = v2.Password(
         auth_url=env['OS_AUTH_URL'],
@@ -112,11 +142,11 @@ def launch_simulation(config):
     # f.write(obj[1])
 
     # Get the bucket for the input data.
-    bucket = s3_conn.get_bucket(config['container'])
+    bucket = s3_conn.get_bucket(simulation.container_name)
     # Get the key from the bucket.
-    input_key = bucket.get_key(config['input_case'])
+    input_key = bucket.get_key(simulation.input_data_object)
 
-    casefile = path.join(casepath, os.path.basename(config['input_case']))
+    casefile = path.join(casepath, os.path.basename(simulation.input_data_object))
     input_key.get_contents_to_filename(casefile)
 
     # Unpack the input case.
@@ -129,12 +159,12 @@ def launch_simulation(config):
 
     # Initialise MPM package
     cmd = ["capstan", "package", "init",
-           "--name", config['project_name'],
-           "--title", config['project_name'],
+           "--name", simulation.simulation_name,
+           "--title", simulation.simulation_name,
            "--author", env['OS_TENANT_NAME']]
 
     # We have to include the required packages in the command.
-    solver_deps, solver_so = get_solver_config()[config['solver']]
+    solver_deps, solver_so = get_solver_config()[simulation.solver]
     deps = solver_deps + get_common_deps()
 
     for d in deps:
@@ -165,23 +195,27 @@ def launch_simulation(config):
     mpm_image = os.path.expanduser(os.path.join("~", ".capstan", "repository",
                                                 image_name, "%s.qemu" % (os.path.basename(temppath))))
 
-    print "Uploading image %s to Glance" % (config['project_name'])
-    image = glance.images.create(name=config['project_name'], disk_format="qcow2", container_format="bare")
+    unique_image_name = __generate_unique_name(simulation.image)
+    print "Uploading image %s to Glance" % unique_image_name
+    image = glance.images.create(name=unique_image_name, disk_format="qcow2", container_format="bare")
     glance.images.upload(image.id, open(mpm_image, 'rb'))
 
     # Get data for the new server we are about to create.
-    of_image = nova.images.find(name=config['project_name'])
-    flavor = nova.flavors.find(id=config['flavor'])
+    of_image = nova.images.find(name=unique_image_name)
+    flavor = nova.flavors.find(id=simulation.flavor)
 
-    # Create a new instance
-    server_count = len(config['cases']) if 'cases' in config else 1
+    simulation_instances = simulation.instance_set.all()
+
+    unique_server_name = __generate_unique_name(simulation.simulation_name)
+
+    server_count = len(simulation_instances)
     if server_count == 1:
-        print "Creating required instance %s" % (config['project_name'])
+        print "Creating required instance %s" % unique_server_name
     else:
         print "Creating required instances %s-1...%s-%d" % (
-            config['project_name'], config['project_name'], server_count)
+            unique_server_name, unique_server_name, server_count)
 
-    nova.servers.create(name=config['project_name'],
+    nova.servers.create(name=unique_server_name,
                         image=of_image,
                         flavor=flavor,
                         min_count=server_count,
@@ -194,11 +228,11 @@ def launch_simulation(config):
         all_up = True
         active_count = 0
 
-        for s in nova.servers.list(search_opts={'name': config['project_name']}):
+        for s in nova.servers.list(search_opts={'name': unique_server_name}):
             if s.status == 'BUILD':
                 all_up = False
             elif s.status == 'ACTIVE':
-                active_count = active_count + 1
+                active_count += 1
 
         if all_up:
             break
@@ -216,7 +250,13 @@ def launch_simulation(config):
 
     print "Associating floating IPs"
     instance_ips = {}
-    for instance in nova.servers.list(search_opts={'name': config['project_name']}):
+    nova_servers_list = nova.servers.list(search_opts={'name': unique_server_name})
+
+    if len(nova_servers_list) != len(simulation_instances):
+        print "Configured instance number and nova created instance number differ!"
+        # exception maybe ?
+
+    for instance in nova_servers_list:
         floating_ip = get_floating_ip(nova)
         instance.add_floating_ip(floating_ip)
 
@@ -231,15 +271,15 @@ def launch_simulation(config):
         print "Some instances failed to obtain valid IP"
         # TODO: stop & cleanup
 
-    instances = []
-
+    simulation_cases = json.loads(simulation.cases)
     print "Customising simulations"
-    for idx, instance in enumerate(nova.servers.list(search_opts={'name': config['project_name']})):
+    for idx, instance in enumerate(nova_servers_list):
         instance_api = rest_api_for(instance_ips[instance.id])
         print "\t%s" % instance.name
 
         # Request input case update given the provided customisations.
-        modified_files = update_case(casepath, config['cases'][idx]['updates'])
+        simulation_case = simulation_cases[idx]
+        modified_files = update_case(casepath, simulation_case['updates'])
 
         for srcfile, destfile in modified_files.iteritems():
             files = {'file': open(destfile, 'rb')}
@@ -253,7 +293,7 @@ def launch_simulation(config):
 
         # Now we need to setup some env variables.
         requests.post("%s/env/OPENFOAM_CASE" % instance_api,
-                      data={"val": '%s-%s' % (config['project_name'], config['cases'][idx]['name'])})
+                      data={"val": '%s-%s' % (unique_server_name, simulation_case['name'])})
         requests.post("%s/env/TENANT" % instance_api, data={"val": env['OS_TENANT_NAME']})
         requests.post("%s/env/WM_PROJECT_DIR" % instance_api, data={"val": '/openfoam'})
 
@@ -261,22 +301,26 @@ def launch_simulation(config):
         t = snap_api.create_openfoam_task(instance_ips[instance.id])
         print "\ttask id %s" % t
 
-        instances.append({
-            'name': '%s-%s' % (config['project_name'], config['cases'][idx]['name']),
-            'config': json.dumps(config['cases'][idx]['updates']),
-            'ip': instance_ips[instance.id],
-            'instance_id': instance.id,
-            'snap_task_id': t
-        })
+        simulation_instance = simulation_instances[idx]
+        simulation_instance.name = '%s-%s' % (unique_server_name, simulation_case['name'])
+        simulation_instance.config = json.dumps(simulation_case['updates'])
+        simulation_instance.ip = instance_ips[instance.id]
+        simulation_instance.instance_id = instance.id
+        simulation_instance.snap_task_id = t
+        simulation_instance.status = Instance.Status.UP.name
+        simulation_instance.save()
 
     print "Starting OpenFOAM simulations"
     solver_command = "/usr/bin/%s -case /case" % solver_so
-    for idx, instance in enumerate(nova.servers.list(search_opts={'name': config['project_name']})):
+    for idx, instance in enumerate(nova.servers.list(search_opts={'name': unique_server_name})):
         instance_api = rest_api_for(instance_ips[instance.id])
 
         requests.put("%s/app/" % instance_api, data={"command": solver_command})
 
-    return instances
+        simulation_instances[idx].status = Instance.Status.RUNNING.name
+        simulation_instances[idx].save()
+
+    return simulation_instances
 
 
 def destroy_simulation(simulation):
@@ -327,3 +371,7 @@ def get_common_deps():
     return [
         "eu.mikelangelo-project.osv.cli"
     ]
+
+
+def __generate_unique_name(name):
+    return name + '-' + str(uuid.uuid4())

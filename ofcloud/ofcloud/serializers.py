@@ -10,7 +10,7 @@ class InstanceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = models.Instance
-        fields = ('id', 'name', 'config', 'ip', 'instance_id', 'grafana_url', 'download_case_url')
+        fields = ('id', 'name', 'config', 'ip', 'instance_id', 'grafana_url', 'download_case_url', 'status')
 
     def get_grafana_url(self, obj):
         return "%s/dashboard/db/snappy-openfoam?var-measurement=intel\/openfoam\/Ux\/initial&var-measurement=intel\/openfoam\/Uy\/initial&var-measurement=intel\/openfoam\/Uz\/initial&var-source=%s" % (
