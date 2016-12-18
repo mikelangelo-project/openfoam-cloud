@@ -4,6 +4,8 @@ from django.db import models
 
 
 class Simulation(models.Model):
+    Status = Enum("Status", "PENDING DEPLOYING RUNNING COMPLETE FAILED")
+
     simulation_name = models.CharField(max_length=200)
     image = models.CharField(max_length=100)
     flavor = models.CharField(max_length=100)
@@ -15,9 +17,11 @@ class Simulation(models.Model):
 
     cases = models.TextField(blank=True)
 
+    status = models.CharField(max_length=100, default=Status.PENDING.name)
+
 
 class Instance(models.Model):
-    Status = Enum("Status", "INIT UP RUNNING")
+    Status = Enum("Status", "PENDING UP RUNNING COMPLETE FAILED")
 
     name = models.CharField(max_length=100)
     config = models.TextField(blank=True)
@@ -28,7 +32,7 @@ class Instance(models.Model):
 
     snap_task_id = models.CharField(max_length=100, blank=True)
 
-    status = models.CharField(max_length=100, default=Status.INIT.name)
+    status = models.CharField(max_length=100, default=Status.PENDING.name)
 
     class Meta:
         ordering = ('name',)

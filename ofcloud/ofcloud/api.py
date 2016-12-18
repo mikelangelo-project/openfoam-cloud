@@ -25,13 +25,16 @@ class SimulationViewSet(viewsets.ModelViewSet):
             print traceback.format_exc()
             return Response(serializer.data, status=status.HTTP_400_BAD_REQUEST)
 
-        # launch the saved simulation, this will in future be done by a scheduler
-        try:
-            launch_simulation(simulation)
-            return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
-        except:
-            print traceback.format_exc()
-            return Response(serializer.data, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        # # retrieve simulation
+        # simulation_get = Simulation.objects.filter(id=simulation.id)[0]
+        #
+        # # launch the saved simulation, this will in future be done by a scheduler
+        # try:
+        #     launch_simulation(simulation_get)
+        #     return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+        # except:
+        #     print traceback.format_exc()
+        #     return Response(serializer.data, status=status.HTTP_400_BAD_REQUEST)
 
     def destroy(self, request, pk=None):
         simulation = self.get_object()

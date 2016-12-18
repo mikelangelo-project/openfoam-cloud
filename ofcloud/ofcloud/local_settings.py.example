@@ -19,3 +19,6 @@ OPENFOAM_NETWORK_CIDR = 'your desired network CIDR'
 OPENFOAM_NETWORK_ALLOCATION_POOL_START = 'your IP allocation range start'
 OPENFOAM_NETWORK_ALLOCATION_POOL_END = 'your IP allocation range end'
 OPENFOAM_NETWORK_GATEWAY_IP = 'your gateway IP usually the first IP in CIDR range'
+
+# Scheduler daemon settings
+SCHEDULER_REFRESH_INTERVAL_SECONDS = 'desired scheduler daemon refresh interval in seconds'

@@ -41,6 +41,9 @@ Edit local settings to reflect your environment
     OPENFOAM_NETWORK_ALLOCATION_POOL_END = 'your IP allocation range end'
     OPENFOAM_NETWORK_GATEWAY_IP = 'your gateway IP usually the first IP in CIDR range'
 
+    # Scheduler daemon settings
+    SCHEDULER_REFRESH_INTERVAL_SECONDS = 'desired scheduler daemon refresh interval in seconds'
+
 ## Running
 
 Ensure snap, influxdb and grafana are running. Define a datasource for influxdb
@@ -53,6 +56,10 @@ in grafana.
 Then launch the OpenFOAM backend
 
     python manage.py runserver 0.0.0.0:8008
+
+Next launch the OpenFOAM scheduler daemon
+
+    python manage.py runscheduler
 
 ## Acknowledgements
 
