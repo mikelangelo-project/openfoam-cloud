@@ -18,8 +18,10 @@ import requests
 from django.conf import settings
 from keystoneauth1 import session
 from keystoneauth1.identity import v2
+from neutronclient.v2_0 import client as ntclient
 
 from ofcloud.models import Instance
+from ofcloud import network_utils
 from snap import api as snap_api
 
 
@@ -113,7 +115,6 @@ def launch_simulation(simulation):
     sess = session.Session(auth=auth)
 
     # Authenticate against required services
-    keystone = ksclient.Client(session=sess)
     glance = glclient.Client(session=sess)
     nova = nvclient.Client("2", session=sess)
     # swift = swclient.Connection(
@@ -122,6 +123,10 @@ def launch_simulation(simulation):
     # authurl=env['OS_AUTH_URL'],
     # auth_version="2",
     # tenant_name=env['OS_TENANT_NAME'])
+
+    # setup network
+    openfoam_network = network_utils.get_openfoam_network_id()
+    nics = [{'net-id': openfoam_network}]
 
     # # Try to download the given input case from Swift.
     # obj = swift.get_object(config['container'], config['input_case'])
@@ -219,7 +224,8 @@ def launch_simulation(simulation):
                         image=of_image,
                         flavor=flavor,
                         min_count=server_count,
-                        max_count=server_count
+                        max_count=server_count,
+                        nics=nics
                         )
 
     # Ensure that all required instances are active.

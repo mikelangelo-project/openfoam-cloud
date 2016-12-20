@@ -34,6 +34,13 @@ Edit local settings to reflect your environment
     INFLUX_DB_USER          = 'admin'
     INFLUX_DB_PASS          = 'admin'
 
+    # Dedicated openfoam network settings
+    OPENFOAM_NETWORK_PREFIX = 'openfoam'
+    OPENFOAM_NETWORK_CIDR = 'your desired network CIDR'
+    OPENFOAM_NETWORK_ALLOCATION_POOL_START = 'your IP allocation range start'
+    OPENFOAM_NETWORK_ALLOCATION_POOL_END = 'your IP allocation range end'
+    OPENFOAM_NETWORK_GATEWAY_IP = 'your gateway IP usually the first IP in CIDR range'
+
 ## Running
 
 Ensure snap, influxdb and grafana are running. Define a datasource for influxdb
