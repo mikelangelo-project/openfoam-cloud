@@ -7,6 +7,7 @@ import daemon.pidfile
 
 from ofcloud.models import Simulation
 from utils import launch_simulation
+from utils import is_simulation_runnable
 
 
 def do_work(sleep_interval):
@@ -23,7 +24,11 @@ def __poll_and_run_simulations():
     print("Found %d simulations in PENDING state." % len(pending_simulations))
 
     for pending_simulation in pending_simulations:
-        launch_simulation(pending_simulation)
+        if is_simulation_runnable(pending_simulation):
+            launch_simulation(pending_simulation)
+        else:
+            print("Maximum number of simulations already running! "
+                  "Pending simulations will be run when currently running finish")
 
 
 def run(sleep_interval):

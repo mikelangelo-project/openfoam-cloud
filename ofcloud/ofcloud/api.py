@@ -5,7 +5,7 @@ from rest_framework.response import Response
 
 from ofcloud.models import Simulation, Instance
 from ofcloud.serializers import SimulationSerializer, InstanceSerializer
-from ofcloud.utils import launch_simulation, destroy_simulation, create_simulation
+from ofcloud.utils import destroy_simulation, create_simulation
 
 
 class SimulationViewSet(viewsets.ModelViewSet):
@@ -24,17 +24,6 @@ class SimulationViewSet(viewsets.ModelViewSet):
         except:
             print traceback.format_exc()
             return Response(serializer.data, status=status.HTTP_400_BAD_REQUEST)
-
-        # # retrieve simulation
-        # simulation_get = Simulation.objects.filter(id=simulation.id)[0]
-        #
-        # # launch the saved simulation, this will in future be done by a scheduler
-        # try:
-        #     launch_simulation(simulation_get)
-        #     return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
-        # except:
-        #     print traceback.format_exc()
-        #     return Response(serializer.data, status=status.HTTP_400_BAD_REQUEST)
 
     def destroy(self, request, pk=None):
         simulation = self.get_object()
