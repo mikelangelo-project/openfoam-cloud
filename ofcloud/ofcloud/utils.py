@@ -3,13 +3,13 @@ import logging
 import os
 import os.path
 import re
-import subprocess
+import shutil
 import tarfile
 import tempfile
 import time
 import traceback
-import uuid
 from os import environ as env, path
+from subprocess import Popen
 
 import boto
 import boto.s3.connection
@@ -33,32 +33,31 @@ def update_case(case_path, updates):
 
     # First, get a list of files that need to be modified
     for key in updates:
-        fileEndIndex = key.rfind('/')
-        filepath = key[0:fileEndIndex]
-        variable = key[fileEndIndex + 1:]
+        file_end_index = key.rfind('/')
+        file_path = key[0:file_end_index]
+        variable = key[file_end_index + 1:]
 
-        if not filepath in input_files:
-            input_files[filepath] = {}
+        if file_path not in input_files:
+            input_files[file_path] = {}
 
-        input_files[filepath][variable] = updates[key]
+        input_files[file_path][variable] = updates[key]
 
     output_files = {}
 
     # Now loop through files and update them.
-    for file, variables in input_files.iteritems():
-        filepath = os.path.join(case_path, file)
+    for input_file, variables in input_files.iteritems():
+        file_path = os.path.join(case_path, input_file)
 
-        f = open(filepath, 'r')
+        f = open(file_path, 'r')
         data = f.read()
         f.close()
 
         for var, value in variables.iteritems():
             data = re.sub(re.compile('^[ \t]*%s\s+.*$' % var, re.MULTILINE), '%s %s;' % (var, value), data)
 
-        ofile = filepath + ".custom"
-        output_files[file] = ofile
+        output_files[input_file] = file_path
 
-        f = open(ofile, 'w')
+        f = open(file_path, 'w')
         f.write(data)
         f.close()
 
@@ -68,7 +67,7 @@ def update_case(case_path, updates):
 def get_floating_ip(nova):
     # Find the first available floating IP
     for fip in nova.floating_ips.list():
-        if fip.instance_id == None:
+        if fip.instance_id is None:
             return fip
 
     # If there was no available floating IP, create and return new
@@ -88,8 +87,7 @@ def create_simulation(simulation_serializer):
     instances = __create_simulation_instances(simulation)
 
     for instance in instances:
-        simulation.instance_set.create(name=instance['name'],
-                                       config=instance['config'])
+        simulation.instance_set.create(name=instance['name'])
 
     return simulation
 
@@ -102,7 +100,6 @@ def __create_simulation_instances(simulation):
     for case in simulation_cases:
         instances.append({
             'name': '%s-%s' % (simulation.simulation_name, case['name']),
-            'config': json.dumps(case['updates'])
         })
     return instances
 
@@ -115,94 +112,30 @@ def launch_simulation(simulation):
         sess = authenticate()
 
         # Authenticate against required services
-        glance = glclient.Client(session=sess)
-        nova = nvclient.Client("2", session=sess)
+        glance_client = glclient.Client(session=sess)
+        nova_client = nvclient.Client("2", session=sess)
 
-        # setup network
-        openfoam_network = network_utils.get_openfoam_network_id()
-        nics = [{'net-id': openfoam_network}]
+        capstan_package_folder, case_folder = __create_local_temp_folders(simulation)
 
-        s3_conn = boto.connect_s3(
-            aws_access_key_id=settings.S3_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.S3_SECRET_ACCESS_KEY,
-            host=settings.S3_HOST,
-            port=settings.S3_PORT,
-            calling_format=boto.s3.connection.OrdinaryCallingFormat(),
-        )
+        __copy_instance_case_files(case_folder, simulation)
 
-        temppath = tempfile.mkdtemp(prefix='ofcloud-')
-        casepath = path.join(temppath, "case")
-
-        os.makedirs(casepath)
-        # with open(casefile, 'w') as f:
-        # f.write(obj[1])
-
-        # Get the bucket for the input data.
-        bucket = s3_conn.get_bucket(simulation.container_name)
-        # Get the key from the bucket.
-        input_key = bucket.get_key(simulation.input_data_object)
-
-        casefile = path.join(casepath, os.path.basename(simulation.input_data_object))
-        input_key.get_contents_to_filename(casefile)
-
-        # Unpack the input case.
-        tar = tarfile.open(casefile, 'r')
-        tar.extractall(casepath)
-        tar.close()
-
-        # Remove the downloaded file
-        os.remove(casefile)
-
-        # Initialise MPM package
-        cmd = ["capstan", "package", "init",
-               "--name", simulation.simulation_name,
-               "--title", simulation.simulation_name,
-               "--author", env['OS_TENANT_NAME']]
-
-        # We have to include the required packages in the command.
         solver_deps, solver_so = get_solver_config()[simulation.solver]
-        deps = solver_deps + get_common_deps()
+        image_name = __init_and_compose_capstan_package(simulation, capstan_package_folder, solver_deps)
 
-        for d in deps:
-            cmd.append("--require")
-            cmd.append(d)
-
-        # Initialise MPM package at the given path.
-        cmd.append(temppath)
-
-        # Invoke capstan tool.
-        p = subprocess.Popen(cmd)
-        p.wait()
-
-        os.chdir(temppath)
-
-        image_name = "temp/%s" % (os.path.basename(temppath))
-        # Now we are ready to compose the package into a VM
-        p = subprocess.Popen([
-            "capstan", "package", "compose",
-            "--size", "500M",
-            "--run", "--redirect=/case/run.log /cli/cli.so",
-            "--pull-missing",
-            image_name])
-        # Wait for the image to be built.
-        p.wait()
-
-        # Import image into Glance
-        mpm_image = os.path.expanduser(os.path.join("~", ".capstan", "repository",
-                                                    image_name, "%s.qemu" % (os.path.basename(temppath))))
-
-        unique_image_name = __generate_unique_name(simulation.image)
-        print "Uploading image %s to Glance" % unique_image_name
-        image = glance.images.create(name=unique_image_name, disk_format="qcow2", container_format="bare")
-        glance.images.upload(image.id, open(mpm_image, 'rb'))
+        image, unique_image_name = __import_image_into_glance(
+            glance_client,
+            image_name,
+            simulation,
+            capstan_package_folder)
 
         # Get data for the new server we are about to create.
-        of_image = nova.images.find(name=unique_image_name)
-        flavor = nova.flavors.find(id=simulation.flavor)
+        of_image = nova_client.images.find(name=unique_image_name)
+        flavor = nova_client.flavors.find(id=simulation.flavor)
+
+        unique_server_name = simulation.simulation_name + '_' + str(simulation.id)
 
         simulation_instances = simulation.instance_set.all()
-
-        unique_server_name = __generate_unique_name(simulation.simulation_name)
+        simulation_cases = json.loads(simulation.cases)
 
         server_count = len(simulation_instances)
         if server_count == 1:
@@ -211,26 +144,35 @@ def launch_simulation(simulation):
             print "Creating required instances %s-1...%s-%d" % (
                 unique_server_name, unique_server_name, server_count)
 
-        nova.servers.create(name=unique_server_name,
-                            image=of_image,
-                            flavor=flavor,
-                            min_count=server_count,
-                            max_count=server_count,
-                            nics=nics
-                            )
+        # setup network
+        openfoam_network = network_utils.get_openfoam_network_id()
+        nics = [{'net-id': openfoam_network}]
 
-        # Ensure that all required instances are active.
+        nova_client.servers.create(name=unique_server_name,
+                                   image=of_image,
+                                   flavor=flavor,
+                                   min_count=server_count,
+                                   max_count=server_count,
+                                   nics=nics
+                                   )
+
+        nova_instance_simulation_instance_dict = {}
+
+        # Ensure that all required instances are active,
+        # and set data required for running simulation to simulation_instance
         active_count = 0
         while True:
             all_up = True
             active_count = 0
 
-            for s in nova.servers.list(search_opts={'name': unique_server_name}):
+            for s in nova_client.servers.list(search_opts={'name': unique_server_name}):
                 if s.status == 'BUILD':
                     all_up = False
                 elif s.status == 'ACTIVE':
                     simulation_instances[active_count].status = Instance.Status.UP.name
-                    simulation_instances[active_count].save()
+                    simulation_instances[active_count].server_id = s.id
+                    # add simulation to dist for easier querying
+                    nova_instance_simulation_instance_dict[s.id] = simulation_instances[active_count]
                     active_count += 1
 
             if all_up:
@@ -245,18 +187,18 @@ def launch_simulation(simulation):
             # TODO: stop & cleanup
 
         # Remove the uploaded image as it is no longer required
-        glance.images.delete(image.id)
+        glance_client.images.delete(image.id)
 
         print "Associating floating IPs"
         instance_ips = {}
-        nova_servers_list = nova.servers.list(search_opts={'name': unique_server_name})
+        nova_servers_list = nova_client.servers.list(search_opts={'name': unique_server_name})
 
         if len(nova_servers_list) != len(simulation_instances):
-            print "Configured instance number and nova created instance number differ!"
+            print "Configured instance number and nova_client created instance number differ!"
             # exception maybe ?
 
         for instance in nova_servers_list:
-            floating_ip = get_floating_ip(nova)
+            floating_ip = get_floating_ip(nova_client)
             instance.add_floating_ip(floating_ip)
 
             instance_ips[instance.id] = floating_ip.ip
@@ -270,23 +212,20 @@ def launch_simulation(simulation):
             print "Some instances failed to obtain valid IP"
             # TODO: stop & cleanup
 
-        simulation_cases = json.loads(simulation.cases)
+        simulation_instance_case_folder = "/ofcloud_results"
         print "Customising simulations"
         for idx, instance in enumerate(nova_servers_list):
+            simulation_instance = nova_instance_simulation_instance_dict[instance.id]
             instance_api = rest_api_for(instance_ips[instance.id])
-            print "\t%s" % instance.name
+            print "\tinstance name %s" % instance.name
 
             # Request input case update given the provided customisations.
             simulation_case = simulation_cases[idx]
-            modified_files = update_case(casepath, simulation_case['updates'])
+            update_case(simulation_instance.local_case_location, json.loads(simulation_instance.config))
 
-            for srcfile, destfile in modified_files.iteritems():
-                files = {'file': open(destfile, 'rb')}
-                upload_url = '%s/file/case/%s' % (instance_api, srcfile)
+            nfs_ip = settings.NFS_IP
 
-                print '\t\tuploading file %s to %s' % (upload_url, destfile)
-
-                requests.post(upload_url, files=files)
+            __mount_instance_case_folder(instance_api, nfs_ip, simulation_instance, simulation_instance_case_folder)
 
             print "\t\tsetting up the execution environment"
 
@@ -300,16 +239,14 @@ def launch_simulation(simulation):
             t = snap_api.create_openfoam_task(instance_ips[instance.id])
             print "\ttask id %s" % t
 
-            simulation_instance = simulation_instances[idx]
             simulation_instance.name = '%s-%s' % (unique_server_name, simulation_case['name'])
-            simulation_instance.config = json.dumps(simulation_case['updates'])
             simulation_instance.ip = instance_ips[instance.id]
             simulation_instance.instance_id = instance.id
             simulation_instance.snap_task_id = t
 
         print "Starting OpenFOAM simulations"
-        solver_command = "/usr/bin/%s -case /case" % solver_so
-        for idx, instance in enumerate(nova.servers.list(search_opts={'name': unique_server_name})):
+        solver_command = "/usr/bin/%s -case %s" % (solver_so, simulation_instance_case_folder)
+        for idx, instance in enumerate(nova_client.servers.list(search_opts={'name': unique_server_name})):
             instance_api = rest_api_for(instance_ips[instance.id])
             requests.put("%s/app/" % instance_api, data={"command": solver_command})
             simulation_instances[idx].status = Instance.Status.RUNNING.name
@@ -406,8 +343,113 @@ def get_solver_config():
 
 def get_common_deps():
     return [
-        "eu.mikelangelo-project.osv.cli"
+        "eu.mikelangelo-project.osv.cli",
+        "eu.mikelangelo-project.osv.nfs"
     ]
+
+
+def __import_image_into_glance(glance_client, image_name, simulation, capstan_package_folder):
+    # Import image into Glance
+    mpm_image = os.path.expanduser(os.path.join("~", ".capstan", "repository",
+                                                image_name, "%s.qemu" % (os.path.basename(capstan_package_folder))))
+    unique_image_name = simulation.image + '_' + str(simulation.id)
+    print "Uploading image %s to Glance" % unique_image_name
+    image = glance_client.images.create(name=unique_image_name, disk_format="qcow2", container_format="bare")
+    glance_client.images.upload(image.id, open(mpm_image, 'rb'))
+    return image, unique_image_name
+
+
+def __init_and_compose_capstan_package(simulation, capstan_package_folder, solver_deps):
+    # Initialise MPM package
+    cmd = ["capstan", "package", "init",
+           "--name", simulation.simulation_name,
+           "--title", simulation.simulation_name,
+           "--author", env['OS_TENANT_NAME']]
+    # We have to include the required packages in the command.
+    deps = solver_deps + get_common_deps()
+    for d in deps:
+        cmd.append("--require")
+        cmd.append(d)
+
+    # Initialise MPM package at the given path.
+    cmd.append(capstan_package_folder)
+    # Invoke capstan tool.
+    p = Popen(cmd)
+    p.wait()
+    os.chdir(capstan_package_folder)
+    image_name = "temp/%s" % (os.path.basename(capstan_package_folder))
+    # Now we are ready to compose the package into a VM
+    p = Popen([
+        "capstan", "package", "compose",
+        "--size", "500M",
+        "--run", "--redirect=/case/run.log /cli/cli.so",
+        "--pull-missing",
+        image_name])
+    # Wait for the image to be built.
+    p.wait()
+    return image_name
+
+
+def __create_local_temp_folders(simulation):
+    # Connect to s3
+    s3_conn = boto.connect_s3(
+        aws_access_key_id=settings.S3_ACCESS_KEY_ID,
+        aws_secret_access_key=settings.S3_SECRET_ACCESS_KEY,
+        host=settings.S3_HOST,
+        port=settings.S3_PORT,
+        calling_format=boto.s3.connection.OrdinaryCallingFormat(),
+    )
+    capstan_package_folder = tempfile.mkdtemp(prefix='ofcloud-capstan-')
+    case_folder = tempfile.mkdtemp(prefix='ofcloud-case-')
+    case_path = path.join(case_folder, "case")
+    os.makedirs(case_path)
+    # Get the bucket for the input data.
+    bucket = s3_conn.get_bucket(simulation.container_name)
+    # Get the key from the bucket.
+    input_key = bucket.get_key(simulation.input_data_object)
+    casefile = path.join(case_path, os.path.basename(simulation.input_data_object))
+
+    input_key.get_contents_to_filename(casefile)
+    # Unpack the input case.
+    tar = tarfile.open(casefile, 'r')
+    tar.extractall(case_path)
+    tar.close()
+    # Remove the downloaded file
+    os.remove(casefile)
+    return capstan_package_folder, case_folder
+
+
+def __copy_instance_case_files(case_folder, simulation):
+    local_nfs_mount_location = settings.LOCAL_NFS_MOUNT_LOCATION
+    nfs_mount_folder = settings.NFS_SERVER_MOUNT_FOLDER
+
+    for idx, simulation_instance in enumerate(simulation.instance_set.all()):
+        local_instance_files_location = "%s/%s/" % (local_nfs_mount_location, str(simulation_instance.id))
+
+        # if folder already exists, remove it
+        if os.path.exists(local_instance_files_location):
+                shutil.rmtree(local_instance_files_location)
+
+        shutil.copytree(src=case_folder, dst=local_instance_files_location)
+
+        # Save storage information to model
+        simulation_instance.local_case_location = '%s/case' % local_instance_files_location
+        simulation_instance.nfs_case_location = '%s/%s/case' % (nfs_mount_folder, str(simulation_instance.id))
+        simulation_instance.config = json.dumps(json.loads(simulation.cases)[idx]['updates'])
+        simulation_instance.save()
+
+    # Delete temporary case data
+    shutil.rmtree(case_folder)
+
+
+def __mount_instance_case_folder(instance_api, nfs_ip, simulation_instance, simulation_instance_case_folder):
+    nfs_mount = 'nfs://%s%s %s' % (nfs_ip, simulation_instance.nfs_case_location, simulation_instance_case_folder)
+    print "\t\tmounting network file storage with %s" % nfs_mount
+    mount_command = "/tools/mount-nfs.so %s" % nfs_mount
+    requests.put(
+        "%s/app" % instance_api,
+        data={"command": mount_command}
+    )
 
 
 def get_available_resources(quotas_set, servers_list, deploying_simulations, flavor_dict, floating_ips):
@@ -451,10 +493,6 @@ def get_available_resources(quotas_set, servers_list, deploying_simulations, fla
         # quotas_set.security_groups -= server.security_groups
 
     return quotas_set
-
-
-def __generate_unique_name(name):
-    return name + '-' + str(uuid.uuid4())
 
 
 def authenticate():

@@ -20,5 +20,15 @@ OPENFOAM_NETWORK_ALLOCATION_POOL_START = 'your IP allocation range start'
 OPENFOAM_NETWORK_ALLOCATION_POOL_END = 'your IP allocation range end'
 OPENFOAM_NETWORK_GATEWAY_IP = 'your gateway IP usually the first IP in CIDR range'
 
+# Location of the folder, where the NFS is mounted. If the scheduler daemon is running on the same machine as the
+# NFS server, then just point to the folder where you want the simulation results to be saved
+LOCAL_NFS_MOUNT_LOCATION = "/mnt/nfs_mount_example"
+
+# Network file storage server ip address
+NFS_IP = 'nfs server ip'
+
+# Location where OpenFOAM case files and results will be saved on the NFS server
+NFS_SERVER_MOUNT_FOLDER = "/export/openfoam_simulations_example"
+
 # Scheduler daemon settings
 SCHEDULER_REFRESH_INTERVAL_SECONDS = 'desired scheduler daemon refresh interval in seconds'

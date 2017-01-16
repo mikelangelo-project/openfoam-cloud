@@ -1,10 +1,17 @@
+import uuid
 from enum import Enum
 
 from django.db import models
 
 
+def make_uuid_ac():
+    return uuid.uuid4()
+
+
 class Simulation(models.Model):
     Status = Enum("Status", "PENDING DEPLOYING RUNNING COMPLETE FAILED")
+
+    id = models.UUIDField(primary_key=True, default=make_uuid_ac, editable=False)
 
     simulation_name = models.CharField(max_length=200)
     image = models.CharField(max_length=100)
@@ -23,6 +30,8 @@ class Simulation(models.Model):
 class Instance(models.Model):
     Status = Enum("Status", "PENDING UP RUNNING COMPLETE FAILED")
 
+    id = models.UUIDField(primary_key=True, default=make_uuid_ac, editable=False)
+
     name = models.CharField(max_length=100)
     config = models.TextField(blank=True)
     ip = models.TextField(max_length=15, blank=True)
@@ -33,6 +42,9 @@ class Instance(models.Model):
     snap_task_id = models.CharField(max_length=100, blank=True)
 
     status = models.CharField(max_length=100, default=Status.PENDING.name)
+
+    local_case_location = models.CharField(max_length=100, blank=True)
+    nfs_case_location = models.CharField(max_length=100, blank=True)
 
     class Meta:
         ordering = ('name',)

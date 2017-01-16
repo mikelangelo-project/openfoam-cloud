@@ -44,6 +44,19 @@ Edit local settings to reflect your environment
     # Scheduler daemon settings
     SCHEDULER_REFRESH_INTERVAL_SECONDS = 'desired scheduler daemon refresh interval in seconds'
 
+    # OpenFOAM simulations save their results on a NFS server as is evident from the NFS_IP setting. The
+    # LOCAL_NFS_MOUNT_LOCATION setting tells the scheduler daemon where to prepare simulation case files, capstan package etc.
+    # This folder should have the NFS location mounted (example /mnt/OpenFOAM_results) except when the scheduler runs on
+    # the NFS machine itself, then this can point directly to the exported directory (for instance '/export/OpenFOAM_results/')
+    LOCAL_NFS_MOUNT_LOCATION = 'path to folder with mounted NFS location'
+
+    # Network file storage server ip address
+    NFS_IP = 'nfs server ip'
+
+    # Location on the NFS server where OpenFOAM case files and results will be saved
+    NFS_SERVER_MOUNT_FOLDER = 'location on the nfs server, where simulation case files and results are saved'
+
+
 ## Running
 
 Ensure snap, influxdb and grafana are running. Define a datasource for influxdb
