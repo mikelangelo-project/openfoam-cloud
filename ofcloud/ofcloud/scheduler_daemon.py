@@ -5,9 +5,9 @@ import time
 import daemon
 import daemon.pidfile
 
-from ofcloud.models import Simulation
-from utils import launch_simulation
-from utils import is_simulation_runnable
+from ofcloud.models import Instance
+from utils import launch_simulation_instance
+from utils import is_simulation_instance_runnable
 
 
 def do_work(sleep_interval):
@@ -15,20 +15,20 @@ def do_work(sleep_interval):
     django.setup()
 
     while True:
-        __poll_and_run_simulations()
+        __poll_and_run_instances()
         time.sleep(sleep_interval)
 
 
-def __poll_and_run_simulations():
-    pending_simulations = Simulation.objects.filter(status=Simulation.Status.PENDING.name)
-    print("Found %d simulations in PENDING state." % len(pending_simulations))
+def __poll_and_run_instances():
+    pending_instances = Instance.objects.filter(status=Instance.Status.PENDING.name)
+    print('Found %d instances in PENDING state.' % len(pending_instances))
 
-    for pending_simulation in pending_simulations:
-        if is_simulation_runnable(pending_simulation):
-            launch_simulation(pending_simulation)
+    for pending_instance in pending_instances:
+        if is_simulation_instance_runnable(pending_instance):
+            launch_simulation_instance(pending_instance)
         else:
-            print("Maximum number of simulations already running! "
-                  "Pending simulations will be run when currently running finish")
+            print("Maximum number of simulation instances already running! "
+                  "Pending instances will be run after currently running instances finish")
 
 
 def run(sleep_interval):

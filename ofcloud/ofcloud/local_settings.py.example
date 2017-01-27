@@ -32,3 +32,7 @@ NFS_SERVER_MOUNT_FOLDER = "/export/openfoam_simulations_example"
 
 # Scheduler daemon settings
 SCHEDULER_REFRESH_INTERVAL_SECONDS = 'desired scheduler daemon refresh interval in seconds'
+
+# Maximum number of launch retries of one instance. When this limit is reached, the simulation instance enters the
+# 'FAILED' state
+OPENFOAM_SIMULATION_MAX_RETRIES = 3

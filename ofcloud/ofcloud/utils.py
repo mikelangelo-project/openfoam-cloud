@@ -87,7 +87,8 @@ def create_simulation(simulation_serializer):
     instances = __create_simulation_instances(simulation)
 
     for instance in instances:
-        simulation.instance_set.create(name=instance['name'])
+        simulation.instance_set.create(name=instance['name'],
+                                       config=instance['config'])
 
     return simulation
 
@@ -100,14 +101,20 @@ def __create_simulation_instances(simulation):
     for case in simulation_cases:
         instances.append({
             'name': '%s-%s' % (simulation.simulation_name, case['name']),
+            'config': json.dumps(case['updates'])
         })
     return instances
 
 
-def launch_simulation(simulation):
+def launch_simulation_instance(simulation_instance):
+    simulation = Simulation.objects.get(id=simulation_instance.simulation_id)
+    simulation.status = Simulation.Status.DEPLOYING.name
+    simulation.save()
+    simulation_instance.status = Instance.Status.DEPLOYING.name
+    simulation_instance.save()
+
     try:
-        simulation.status = Simulation.Status.DEPLOYING.name
-        simulation.save()
+        print "Launching instance %s" % simulation_instance.id
 
         sess = authenticate()
 
@@ -116,12 +123,12 @@ def launch_simulation(simulation):
         nova_client = nvclient.Client("2", session=sess)
 
         capstan_package_folder, case_folder = __create_local_temp_folders(simulation)
-
-        __copy_instance_case_files(case_folder, simulation)
+        __copy_instance_case_files(case_folder, simulation_instance)
 
         solver_deps, solver_so = get_solver_config()[simulation.solver]
-        image_name = __init_and_compose_capstan_package(simulation, capstan_package_folder, solver_deps)
 
+        # TODO have an image ready on glance, as now we don't compile the case folder into the OSv image
+        image_name = __init_and_compose_capstan_package(simulation, capstan_package_folder, solver_deps)
         image, unique_image_name = __import_image_into_glance(
             glance_client,
             image_name,
@@ -129,20 +136,13 @@ def launch_simulation(simulation):
             capstan_package_folder)
 
         # Get data for the new server we are about to create.
-        of_image = nova_client.images.find(name=unique_image_name)
+        # of_image = nova_client.images.find(name=unique_image_name)
+        of_image = nova_client.images.get(image.id)
         flavor = nova_client.flavors.find(id=simulation.flavor)
 
-        unique_server_name = simulation.simulation_name + '_' + str(simulation.id)
+        unique_server_name = '%s-%s' % (simulation_instance.name, str(simulation_instance.id))
 
-        simulation_instances = simulation.instance_set.all()
-        simulation_cases = json.loads(simulation.cases)
-
-        server_count = len(simulation_instances)
-        if server_count == 1:
-            print "Creating required instance %s" % unique_server_name
-        else:
-            print "Creating required instances %s-1...%s-%d" % (
-                unique_server_name, unique_server_name, server_count)
+        print "Creating required instance %s" % unique_server_name
 
         # setup network
         openfoam_network = network_utils.get_openfoam_network_id()
@@ -151,116 +151,82 @@ def launch_simulation(simulation):
         nova_client.servers.create(name=unique_server_name,
                                    image=of_image,
                                    flavor=flavor,
-                                   min_count=server_count,
-                                   max_count=server_count,
                                    nics=nics
                                    )
 
-        nova_instance_simulation_instance_dict = {}
+        nova_server_list = nova_client.servers.list(search_opts={'name': unique_server_name})
 
-        # Ensure that all required instances are active,
-        # and set data required for running simulation to simulation_instance
-        active_count = 0
+        if len(nova_server_list) != 1:
+            raise RuntimeError("Expected 1 server with unique name '%s', instead found %d" % (
+                unique_server_name, len(nova_server_list)))
+
+        simulation_instance.instance_id = nova_server_list[0].id
+
+        # Wait for the instance to become active
         while True:
-            all_up = True
-            active_count = 0
+            nova_server = nova_client.servers.get(simulation_instance.instance_id)
 
-            for s in nova_client.servers.list(search_opts={'name': unique_server_name}):
-                if s.status == 'BUILD':
-                    all_up = False
-                elif s.status == 'ACTIVE':
-                    simulation_instances[active_count].status = Instance.Status.UP.name
-                    simulation_instances[active_count].server_id = s.id
-                    # add simulation to dist for easier querying
-                    nova_instance_simulation_instance_dict[s.id] = simulation_instances[active_count]
-                    active_count += 1
-
-            if all_up:
+            if nova_server.status == 'ACTIVE':
+                simulation_instance.status = Instance.Status.UP.name
+                simulation_instance.save()
                 break
-
             time.sleep(0.5)
-
-        if active_count == server_count:
-            print "All instances up and running"
-        else:
-            print "Some instances failed to boot"
-            # TODO: stop & cleanup
 
         # Remove the uploaded image as it is no longer required
         glance_client.images.delete(image.id)
 
         print "Associating floating IPs"
-        instance_ips = {}
-        nova_servers_list = nova_client.servers.list(search_opts={'name': unique_server_name})
+        nova_server = nova_client.servers.get(simulation_instance.instance_id)
+        floating_ip = get_floating_ip(nova_client)
+        nova_server.add_floating_ip(floating_ip.ip)
+        simulation_instance.ip = floating_ip.ip
 
-        if len(nova_servers_list) != len(simulation_instances):
-            print "Configured instance number and nova_client created instance number differ!"
-            # exception maybe ?
-
-        for instance in nova_servers_list:
-            floating_ip = get_floating_ip(nova_client)
-            instance.add_floating_ip(floating_ip)
-
-            instance_ips[instance.id] = floating_ip.ip
-
-            print "\tInstance %s accessible at %s" % (instance.name, floating_ip.ip)
+        print "\tInstance %s accessible at %s" % (nova_server.name, floating_ip.ip)
 
         print "Wait 5s for the router to setup floating IPs"
         time.sleep(5)
 
-        if len(instance_ips) != server_count:
-            print "Some instances failed to obtain valid IP"
-            # TODO: stop & cleanup
-
         simulation_instance_case_folder = "/ofcloud_results"
         print "Customising simulations"
-        for idx, instance in enumerate(nova_servers_list):
-            simulation_instance = nova_instance_simulation_instance_dict[instance.id]
-            instance_api = rest_api_for(instance_ips[instance.id])
-            print "\tinstance name %s" % instance.name
 
-            # Request input case update given the provided customisations.
-            simulation_case = simulation_cases[idx]
-            update_case(simulation_instance.local_case_location, json.loads(simulation_instance.config))
+        instance_api = rest_api_for(simulation_instance.ip)
 
-            nfs_ip = settings.NFS_IP
+        # Request input case update given the provided customisations.
+        update_case(simulation_instance.local_case_location, json.loads(simulation_instance.config))
 
-            __mount_instance_case_folder(instance_api, nfs_ip, simulation_instance, simulation_instance_case_folder)
+        nfs_ip = settings.NFS_IP
 
-            print "\t\tsetting up the execution environment"
+        __mount_instance_case_folder(instance_api, nfs_ip, simulation_instance, simulation_instance_case_folder)
 
-            # Now we need to setup some env variables.
-            requests.post("%s/env/OPENFOAM_CASE" % instance_api,
-                          data={"val": '%s-%s' % (unique_server_name, simulation_case['name'])})
-            requests.post("%s/env/TENANT" % instance_api, data={"val": env['OS_TENANT_NAME']})
-            requests.post("%s/env/WM_PROJECT_DIR" % instance_api, data={"val": '/openfoam'})
+        print "\t\tsetting up the execution environment"
 
-            print "Starting snap collector"
-            t = snap_api.create_openfoam_task(instance_ips[instance.id])
-            print "\ttask id %s" % t
+        # Now we need to setup some env variables.
+        requests.post("%s/env/OPENFOAM_CASE" % instance_api,
+                      data={"val": '%s-%s' % (unique_server_name, simulation_instance.name)})
+        requests.post("%s/env/TENANT" % instance_api, data={"val": env['OS_TENANT_NAME']})
+        requests.post("%s/env/WM_PROJECT_DIR" % instance_api, data={"val": '/openfoam'})
 
-            simulation_instance.name = '%s-%s' % (unique_server_name, simulation_case['name'])
-            simulation_instance.ip = instance_ips[instance.id]
-            simulation_instance.instance_id = instance.id
-            simulation_instance.snap_task_id = t
+        print "Starting snap collector"
+        t = snap_api.create_openfoam_task(simulation_instance.ip)
+        print "\ttask id %s" % t
+
+        simulation_instance.instance_id = nova_server.id
+        simulation_instance.snap_task_id = t
 
         print "Starting OpenFOAM simulations"
         solver_command = "/usr/bin/%s -case %s" % (solver_so, simulation_instance_case_folder)
-        for idx, instance in enumerate(nova_client.servers.list(search_opts={'name': unique_server_name})):
-            instance_api = rest_api_for(instance_ips[instance.id])
-            requests.put("%s/app/" % instance_api, data={"command": solver_command})
-            simulation_instances[idx].status = Instance.Status.RUNNING.name
-            simulation_instances[idx].save()
+        instance_api = rest_api_for(simulation_instance.ip)
+        requests.put("%s/app/" % instance_api, data={"command": solver_command})
 
+        simulation_instance.status = Instance.Status.RUNNING.name
+        simulation_instance.save()
         simulation.status = Simulation.Status.RUNNING.name
         simulation.save()
 
-        return simulation, simulation_instances
+        return simulation, simulation_instance
     except:
-        exception_message = traceback.format_exc()
-        print exception_message
-        simulation.status = Simulation.Status.FAILED.name
-        simulation.save()
+        print traceback.format_exc()
+        __handle_launch_instance_exception(simulation, simulation_instance)
 
 
 def destroy_simulation(simulation):
@@ -276,11 +242,11 @@ def destroy_simulation(simulation):
             print "Instance not found"
 
 
-def is_simulation_runnable(simulation):
+def is_simulation_instance_runnable(simulation_instance):
     """Checks whether the simulation can be run at this moment.
 
-    :param simulation: simulation object
-    :type simulation: Simulation object ofcloud.models.Simulation
+    :param simulation_instance: instance object
+    :type simulation_instance: Instance object ofcloud.models.Instance
     :return: Boolean
     """
 
@@ -296,23 +262,23 @@ def is_simulation_runnable(simulation):
 
     servers = nova.servers.list()
 
-    deploying_simulations = Simulation.objects.filter(status=Simulation.Status.DEPLOYING.name)
+    deploying_simulation_instances = Instance.objects.filter(status=Instance.Status.DEPLOYING.name)
     # build our own quotas and usages, because nova can not do this at the moment
-    available_resources = get_available_resources(quotas, servers, deploying_simulations, flavor_dict, floating_ips)
+    available_resources = get_available_resources(quotas, servers, deploying_simulation_instances, flavor_dict,
+                                                  floating_ips)
 
-    instance_num = len(Instance.objects.filter(simulation_id=simulation.id))
+    simulation = Simulation.objects.get(id=simulation_instance.simulation_id)
     simulation_flavor = flavor_dict[simulation.flavor]
 
-    available_resources.cores -= simulation_flavor.vcpus * instance_num
+    available_resources.cores -= simulation_flavor.vcpus
     # Here we actually do not know, how many of these instances will have a floating ip assigned,
     # so to be safe we assume they will all have one
-    available_resources.floating_ips -= instance_num
-    available_resources.instances -= instance_num
+    available_resources.floating_ips -= 1
+    available_resources.instances -= 1
     available_resources.ram -= simulation_flavor.ram
 
     # Configure logging in the future
     # logging.debug(str(available_resources))
-    print str(available_resources)
 
     return available_resources.cores >= 0 \
            and available_resources.floating_ips >= 0 \
@@ -346,6 +312,63 @@ def get_common_deps():
         "eu.mikelangelo-project.osv.cli",
         "eu.mikelangelo-project.osv.nfs"
     ]
+
+
+def get_available_resources(quotas_set, servers_list, deploying_simulation_instances, flavor_dict, floating_ips):
+    """Returns a quota set containing only available resources.
+
+    :param quotas_set: a set containing quota data. Should at least contain fields: 'cores', 'floating_ips',
+    'instances', 'ram' and 'security_groups'
+    :type quotas_set: Set
+    :param servers_list: a list of running nova servers
+    :type servers_list: List
+    :param deploying_simulation_instances: List of Instance models representing simulation instances currently being
+    deployed
+    :type deploying_simulation_instances: List
+    :param flavor_dict: a dictionary of available nova flavors. Keys in the dict must be flavor_ids, values
+    must be flavor objects
+    :type flavor_dict: dict
+    :param floating_ips: a list of used floating ips as returned from nova
+    :type floating_ips: List
+    :return: Quota set of remaining resources
+    """
+
+    for server in servers_list:
+        server_flavor = flavor_dict[server.flavor['id']]
+
+        quotas_set.cores -= server_flavor.vcpus
+        quotas_set.instances -= 1
+        quotas_set.ram -= server_flavor.ram
+        quotas_set.security_groups -= len(server.security_groups)
+
+    quotas_set.floating_ips -= len(floating_ips)
+
+    for simulation_instance in deploying_simulation_instances:
+        simulation = Simulation.objects.get(id=simulation_instance.simulation_id)
+        # instance_num = len(Instance.objects.filter(simulation_id=simulation.id))
+        simulation_flavor = flavor_dict[simulation.flavor]
+
+        quotas_set.cores -= simulation_flavor.vcpus
+        # Here we actually do not know, how many of these instances will have a floating ip assigned,
+        # so to be safe we assume they will all have one
+        quotas_set.floating_ips -= 1
+        quotas_set.instances -= 1
+        quotas_set.ram -= simulation_flavor.ram
+        # quotas_set.security_groups -= server.security_groups
+
+    return quotas_set
+
+
+def authenticate():
+    # Authenticate using ENV variables
+    auth = v2.Password(
+        auth_url=env['OS_AUTH_URL'],
+        username=env['OS_USERNAME'],
+        password=env['OS_PASSWORD'],
+        tenant_id=env['OS_TENANT_ID'])
+    # Open auth session
+    sess = session.Session(auth=auth)
+    return sess
 
 
 def __import_image_into_glance(glance_client, image_name, simulation, capstan_package_folder):
@@ -419,24 +442,21 @@ def __create_local_temp_folders(simulation):
     return capstan_package_folder, case_folder
 
 
-def __copy_instance_case_files(case_folder, simulation):
+def __copy_instance_case_files(case_folder, simulation_instance):
     local_nfs_mount_location = settings.LOCAL_NFS_MOUNT_LOCATION
     nfs_mount_folder = settings.NFS_SERVER_MOUNT_FOLDER
 
-    for idx, simulation_instance in enumerate(simulation.instance_set.all()):
-        local_instance_files_location = "%s/%s/" % (local_nfs_mount_location, str(simulation_instance.id))
+    local_instance_files_location = "%s/%s/" % (local_nfs_mount_location, str(simulation_instance.id))
 
-        # if folder already exists, remove it
-        if os.path.exists(local_instance_files_location):
-                shutil.rmtree(local_instance_files_location)
+    if os.path.exists(local_instance_files_location):
+        shutil.rmtree(local_instance_files_location)
 
-        shutil.copytree(src=case_folder, dst=local_instance_files_location)
+    shutil.copytree(src=case_folder, dst=local_instance_files_location)
 
-        # Save storage information to model
-        simulation_instance.local_case_location = '%s/case' % local_instance_files_location
-        simulation_instance.nfs_case_location = '%s/%s/case' % (nfs_mount_folder, str(simulation_instance.id))
-        simulation_instance.config = json.dumps(json.loads(simulation.cases)[idx]['updates'])
-        simulation_instance.save()
+    # Save storage information to model
+    simulation_instance.local_case_location = '%s/case' % local_instance_files_location
+    simulation_instance.nfs_case_location = '%s/%s/case' % (nfs_mount_folder, str(simulation_instance.id))
+    simulation_instance.save()
 
     # Delete temporary case data
     shutil.rmtree(case_folder)
@@ -450,61 +470,6 @@ def __mount_instance_case_folder(instance_api, nfs_ip, simulation_instance, simu
         "%s/app" % instance_api,
         data={"command": mount_command}
     )
-
-
-def get_available_resources(quotas_set, servers_list, deploying_simulations, flavor_dict, floating_ips):
-    """Returns a quota set containing only available resources.
-
-    :param quotas_set: a set containing quota data. Should at least contain fields: 'cores', 'floating_ips',
-    'instances', 'ram' and 'security_groups'
-    :type quotas_set: Set
-    :param servers_list: a list of running nova servers
-    :type servers_list: List
-    :param deploying_simulations: a list of Simulation models representing all simulations currently being deployed
-    :type deploying_simulations: List
-    :param flavor_dict: a dictionary of available nova flavors. Keys in the dict must be flavor_ids, values
-    must be flavor objects
-    :type flavor_dict: dict
-    :param floating_ips: a list of used floating ips as returned from nova
-    :type floating_ips: List
-    :return: Quota set of remaining resources
-    """
-
-    for server in servers_list:
-        server_flavor = flavor_dict[server.flavor['id']]
-
-        quotas_set.cores -= server_flavor.vcpus
-        quotas_set.instances -= 1
-        quotas_set.ram -= server_flavor.ram
-        quotas_set.security_groups -= len(server.security_groups)
-
-    quotas_set.floating_ips -= len(floating_ips)
-
-    for simulation in deploying_simulations:
-        instance_num = len(Instance.objects.filter(simulation_id=simulation.id))
-        simulation_flavor = flavor_dict[simulation.flavor]
-
-        quotas_set.cores -= simulation_flavor.vcpus
-        # Here we actually do not know, how many of these instances will have a floating ip assigned,
-        # so to be safe we assume they will all have one
-        quotas_set.floating_ips -= instance_num
-        quotas_set.instances -= instance_num
-        quotas_set.ram -= simulation_flavor.ram
-        # quotas_set.security_groups -= server.security_groups
-
-    return quotas_set
-
-
-def authenticate():
-    # Authenticate using ENV variables
-    auth = v2.Password(
-        auth_url=env['OS_AUTH_URL'],
-        username=env['OS_USERNAME'],
-        password=env['OS_PASSWORD'],
-        tenant_id=env['OS_TENANT_ID'])
-    # Open auth session
-    sess = session.Session(auth=auth)
-    return sess
 
 
 def __get_nova_client():
@@ -529,3 +494,33 @@ def __build_flavor_dict(flavor_list):
         flavor_dict[flavor.id] = flavor
 
     return flavor_dict
+
+
+def __handle_launch_instance_exception(simulation, simulation_instance):
+    simulation_instance.retry_attempts += 1
+    print "Setting instance %s retry attempts to %d/%d" % \
+          (simulation_instance.id, simulation_instance.retry_attempts, settings.OPENFOAM_SIMULATION_MAX_RETRIES)
+
+    max_retries = settings.OPENFOAM_SIMULATION_MAX_RETRIES
+    if simulation_instance.retry_attempts < max_retries:
+        simulation_instance.status = Instance.Status.PENDING.name
+        simulation_instance.save()
+    else:
+        print "Max retries reached, sending instance to FAILED"
+        simulation_instance.status = Instance.Status.FAILED.name
+        simulation_instance.save()
+
+        simulation_instances = Instance.objects.filter(simulation=simulation.id)
+        print "Other instances in this simulation %s" % str(simulation_instances)
+
+        all_failed = True
+        for simulation_instance in simulation_instances:
+            print "%s is in status %s" % (simulation_instance.id, simulation_instance.status)
+            if simulation_instance.status != Instance.Status.FAILED.name:
+                all_failed = False
+                break
+
+        if all_failed:
+            print("All underlying instances have failed, sending simulation %s to FAILED state" % simulation.id)
+            simulation.status = Instance.Status.FAILED.name
+            simulation.save()

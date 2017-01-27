@@ -56,6 +56,10 @@ Edit local settings to reflect your environment
     # Location on the NFS server where OpenFOAM case files and results will be saved
     NFS_SERVER_MOUNT_FOLDER = 'location on the nfs server, where simulation case files and results are saved'
 
+    # Maximum number of launch retries of one instance. When this limit is reached, the simulation instance enters the
+    # 'FAILED' state
+    OPENFOAM_SIMULATION_MAX_RETRIES = 3
+
 
 ## Running
 

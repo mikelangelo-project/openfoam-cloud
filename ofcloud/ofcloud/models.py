@@ -28,7 +28,7 @@ class Simulation(models.Model):
 
 
 class Instance(models.Model):
-    Status = Enum("Status", "PENDING UP RUNNING COMPLETE FAILED")
+    Status = Enum("Status", "PENDING DEPLOYING UP RUNNING COMPLETE FAILED")
 
     id = models.UUIDField(primary_key=True, default=make_uuid_ac, editable=False)
 
@@ -45,6 +45,8 @@ class Instance(models.Model):
 
     local_case_location = models.CharField(max_length=100, blank=True)
     nfs_case_location = models.CharField(max_length=100, blank=True)
+
+    retry_attempts = models.IntegerField(default=0)
 
     class Meta:
         ordering = ('name',)
