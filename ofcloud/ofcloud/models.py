@@ -35,7 +35,7 @@ class Instance(models.Model):
     name = models.CharField(max_length=100)
     config = models.TextField(blank=True)
     ip = models.TextField(max_length=15, blank=True)
-    instance_id = models.TextField(max_length=100, blank=True)
+    nova_server_id = models.TextField(max_length=100, blank=True)
 
     simulation = models.ForeignKey(Simulation, on_delete=models.CASCADE)
 

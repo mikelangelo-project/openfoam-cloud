@@ -1,3 +1,4 @@
+import collections
 import json
 import logging
 import os
@@ -160,11 +161,11 @@ def launch_simulation_instance(simulation_instance):
             raise RuntimeError("Expected 1 server with unique name '%s', instead found %d" % (
                 unique_server_name, len(nova_server_list)))
 
-        simulation_instance.instance_id = nova_server_list[0].id
+        simulation_instance.nova_server_id = nova_server_list[0].id
 
         # Wait for the instance to become active
         while True:
-            nova_server = nova_client.servers.get(simulation_instance.instance_id)
+            nova_server = nova_client.servers.get(simulation_instance.nova_server_id)
 
             if nova_server.status == 'ACTIVE':
                 simulation_instance.status = Instance.Status.UP.name
@@ -176,7 +177,7 @@ def launch_simulation_instance(simulation_instance):
         glance_client.images.delete(image.id)
 
         print "Associating floating IPs"
-        nova_server = nova_client.servers.get(simulation_instance.instance_id)
+        nova_server = nova_client.servers.get(simulation_instance.nova_server_id)
         floating_ip = get_floating_ip(nova_client)
         nova_server.add_floating_ip(floating_ip.ip)
         simulation_instance.ip = floating_ip.ip
@@ -215,7 +216,7 @@ def launch_simulation_instance(simulation_instance):
             print traceback.format_exc()
             print "Snap collector request timed out. Simulation will be ran despite this error."
 
-        simulation_instance.instance_id = nova_server.id
+        simulation_instance.nova_server_id = nova_server.id
 
         print "Starting OpenFOAM simulations"
         solver_command = "/usr/bin/%s -case %s" % (solver_so, simulation_instance_case_folder)
@@ -233,12 +234,92 @@ def launch_simulation_instance(simulation_instance):
         __handle_launch_instance_exception(simulation, simulation_instance)
 
 
+def shutdown_nova_servers(instances):
+    """
+    Shuts down nova servers with provided ids.
+
+    :param instances: A list of instances
+    :return:
+    """
+
+    nova = __get_nova_client()
+
+    for instance in instances:
+        try:
+            print "Shutting down instances with ids %s" % str(instance.nova_server_id)
+            server = nova.servers.get(instance.nova_server_id)
+            nova.servers.delete(server.id)
+        except:
+            print "Could not shutdown nova server %s" % instance.nova_server_id
+            print traceback.format_exc()
+
+
+def split_running_and_orphaned_instances(instances):
+    """
+    Takes the provided Instance list and separates the containing instances regarding they still have a nova server
+    running or not.
+
+    :param instances: A list of Instance objects
+    :return: tuple, first element is a list of instances with running servers, second element is a list of
+    instances without running servers (orphaned)
+    """
+    running_instances = []
+    orphaned_instances = []
+
+    nova = __get_nova_client()
+
+    # TODO when deciding on writing unit tests (we really should), this should be a function parameter
+    nova_server_ids = {nova_server.id: True for nova_server in nova.servers.list()}
+
+    for instance in instances:
+        if instance.nova_server_id in nova_server_ids:
+            running_instances.append(instance)
+        else:
+            orphaned_instances.append(instance)
+
+    return running_instances, orphaned_instances
+
+
+def set_instance_status(instances, status):
+    """
+    Updates all the instances corresponding to the ids in instance_ids to the provided status
+
+    :param instances: List of instances
+    :param status: Instance.Status value. Should be string value, not Enum. Example: Instance.Status.PENDING.name
+    :return:
+    """
+    Instance.objects.filter(id__in=[instance.id for instance in instances]).update(status=status)
+
+
+def get_instances_of_finished_simulations(running_instances):
+    """
+    Takes the provided running_instance_ids and filters out the instances which have the openFOAM solver thread still
+    running.
+
+    :param running_instances: List of instances with a nova server running.
+    :return: Two lists, the first containing nova server IDs and the second instance IDs of running and finished
+    simulation nova servers and instances
+    """
+
+    finished_instances = []
+    print "Filtering servers with finished calculations ..."
+    for instance in running_instances:
+        try:
+            if __is_openfoam_thread_finished(instance):
+                finished_instances.append(instance)
+        except:
+            print "Could not determine status of openFOAM thread on instance %s" % instance.id
+
+    print "Instances with finished calculations %s" % [instance.id for instance in finished_instances]
+    return finished_instances
+
+
 def destroy_simulation(simulation):
     nova = __get_nova_client()
 
     for instance in simulation.instance_set.all():
         try:
-            server = nova.servers.get(instance.instance_id)
+            server = nova.servers.get(instance.nova_server_id)
             nova.servers.delete(server)
 
             snap_api.stop_openfoam_task(instance.snap_task_id)
@@ -247,7 +328,8 @@ def destroy_simulation(simulation):
 
 
 def is_simulation_instance_runnable(simulation_instance):
-    """Checks whether the simulation can be run at this moment.
+    """
+    Checks whether the simulation can be run at this moment.
 
     :param simulation_instance: instance object
     :type simulation_instance: Instance object ofcloud.models.Instance
@@ -319,7 +401,8 @@ def get_common_deps():
 
 
 def get_available_resources(quotas_set, servers_list, deploying_simulation_instances, flavor_dict, floating_ips):
-    """Returns a quota set containing only available resources.
+    """
+    Returns a quota set containing only available resources.
 
     :param quotas_set: a set containing quota data. Should at least contain fields: 'cores', 'floating_ips',
     'instances', 'ram' and 'security_groups'
@@ -485,7 +568,8 @@ def __get_neutron_client():
 
 
 def __build_flavor_dict(flavor_list):
-    """Returns a dictionary of flavors. Key - flavor id, value - flavor object.
+    """
+    Returns a dictionary of flavors. Key - flavor id, value - flavor object.
 
     :param flavor_list: a list of flavors as returned from nova client.
     :type flavor_list: list
@@ -528,3 +612,44 @@ def __handle_launch_instance_exception(simulation, simulation_instance):
             print("All underlying instances have failed, sending simulation %s to FAILED state" % simulation.id)
             simulation.status = Instance.Status.FAILED.name
             simulation.save()
+
+
+def __get_instance_thread_info(instance):
+    """
+    Retrieves the OSv VM thread info through its REST api.
+
+    :param instance: Instance object of the simulation we are querying for thread info. The instance should contain the
+    IP field.
+    :return: A list of thread info objects.
+    """
+    try:
+        threads_rest_api = "%s/os/threads" % rest_api_for(instance.ip)
+        print "Querying threads api on %s" % threads_rest_api
+        response = requests.get(threads_rest_api)
+        json_response = json.loads(response.text)
+
+        thread_list = json_response['list']
+        return thread_list
+    except:
+        print "Instance api not available"
+        print traceback.format_exc()
+
+
+def __is_openfoam_thread_finished(instance):
+    """
+    Takes a OSv VM thread list and checks if the OpenFOAM solver thread is still executing.
+
+    :param instance: Instance object of the simulation we query for thread info
+    :return: True if the thread is terminated or not present, False if it is still executing
+    """
+    openfoam_thread_present = False
+    thread_list = __get_instance_thread_info(instance)
+
+    for thread in thread_list:
+        if thread['name'] == '/usr/bin/simple':
+            print "Found openFOAM thread! %s" % thread
+            openfoam_thread_present = True
+            if thread['status'] == 'terminated':
+                return True
+
+    return not openfoam_thread_present
