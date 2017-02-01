@@ -10,7 +10,22 @@ class InstanceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = models.Instance
-        fields = ('id', 'name', 'config', 'ip', 'nova_server_id', 'grafana_url', 'download_case_url', 'status')
+        fields = (
+            'id',
+            'name',
+            'config',
+            'ip',
+            'nova_server_id',
+            'simulation',
+            'snap_task_id',
+            'status',
+            'local_case_location',
+            'nfs_case_location',
+            'retry_attempts',
+
+            'grafana_url',
+            'download_case_url'
+        )
 
     def get_grafana_url(self, obj):
         return "%s/dashboard/db/snappy-openfoam?var-measurement=intel\/openfoam\/Ux\/initial&var-measurement=intel\/openfoam\/Uy\/initial&var-measurement=intel\/openfoam\/Uz\/initial&var-source=%s" % (
@@ -27,5 +42,17 @@ class SimulationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = models.Simulation
-        fields = ('id', 'simulation_name', 'image', 'flavor', 'solver', 'instance_count',
-                  'container_name', 'input_data_object', 'cases', 'instances')
+        fields = (
+            'id',
+            'simulation_name',
+            'image',
+            'flavor',
+            'solver',
+            'instance_count',
+            'container_name',
+            'input_data_object',
+            'cases',
+            'status',
+
+            'instances'
+        )
