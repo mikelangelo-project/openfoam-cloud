@@ -60,6 +60,16 @@ Edit local settings to reflect your environment
     # 'FAILED' state
     OPENFOAM_SIMULATION_MAX_RETRIES = 3
 
+    # Overrides the number of maximum NOVA vcpu's used. Example: openstack allows use of maximum 24 vcpus. Our setting
+    # allows only 12. The scheduler_deamon will run new simulations until 12 vcpu's are used on nova.
+    # If this setting value is higher than nova's max VCPU quota, the latter will be respected.
+    OPENFOAM_MAX_CPU_USAGE = 18
+
+    # Overrides the number of maximum NOVA instances used. Example: openstack allows use of 10 instances. Our setting
+    # allows only 5. The scheduler_deamon will run new simulations until 5 oinstances are used on nova.
+    # If this setting value is higher than nova's max instance quota, the latter will be respected.
+    OPENFOAM_MAX_INSTANCE_USAGE = 8
+
 
 ## Running
 

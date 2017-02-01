@@ -158,6 +158,8 @@ def launch_simulation_instance(simulation_instance):
         nova_server_list = nova_client.servers.list(search_opts={'name': unique_server_name})
 
         if len(nova_server_list) != 1:
+            # TODO handle this, do not allow multiple servers with the same unique name
+            #  it would be best if we destroy all we find before spawning a new one
             raise RuntimeError("Expected 1 server with unique name '%s', instead found %d" % (
                 unique_server_name, len(nova_server_list)))
 
@@ -342,34 +344,40 @@ def is_simulation_instance_runnable(simulation_instance):
 
     # get required data
     flavor_dict = __build_flavor_dict(nova.flavors.list())
-    quotas = nova.quotas.get(tenant_id=env['OS_TENANT_ID'])
+
     floating_ips = filter(lambda f_ip: f_ip['fixed_ip_address'] is not None,
                           neutron.list_floatingips(retrieve_all=True)['floatingips'])
 
-    servers = nova.servers.list()
-
     deploying_simulation_instances = Instance.objects.filter(status=Instance.Status.DEPLOYING.name)
-    # build our own quotas and usages, because nova can not do this at the moment
-    available_resources = get_available_resources(quotas, servers, deploying_simulation_instances, flavor_dict,
-                                                  floating_ips)
-
     simulation = Simulation.objects.get(id=simulation_instance.simulation_id)
     simulation_flavor = flavor_dict[simulation.flavor]
 
-    available_resources.cores -= simulation_flavor.vcpus
+    servers = nova.servers.list()
+    total_quotas = nova.quotas.get(tenant_id=env['OS_TENANT_ID'])
+
+    # Check which limits are stricter, and use those
+    total_quotas.cores = min(settings.OPENFOAM_MAX_CPU_USAGE, total_quotas.cores)
+    total_quotas.instances = min(settings.OPENFOAM_MAX_INSTANCE_USAGE, total_quotas.instances)
+
+    # build our own quotas and usages, because nova can not do this at the moment
+    available_quotas = get_available_quotas(total_quotas, servers, deploying_simulation_instances, flavor_dict,
+                                            floating_ips)
+
+    available_quotas.cores -= simulation_flavor.vcpus
     # Here we actually do not know, how many of these instances will have a floating ip assigned,
     # so to be safe we assume they will all have one
-    available_resources.floating_ips -= 1
-    available_resources.instances -= 1
-    available_resources.ram -= simulation_flavor.ram
+    available_quotas.floating_ips -= 1
+    available_quotas.instances -= 1
+    available_quotas.ram -= simulation_flavor.ram
 
     # Configure logging in the future
     # logging.debug(str(available_resources))
 
-    return available_resources.cores >= 0 \
-           and available_resources.floating_ips >= 0 \
-           and available_resources.instances >= 0 \
-           and available_resources.ram >= 0
+    return \
+        available_quotas.cores >= 0 \
+        and available_quotas.floating_ips >= 0 \
+        and available_quotas.instances >= 0 \
+        and available_quotas.ram >= 0
 
 
 def get_solver_config():
@@ -426,7 +434,6 @@ def get_available_resources(quotas_set, servers_list, deploying_simulation_insta
         quotas_set.cores -= server_flavor.vcpus
         quotas_set.instances -= 1
         quotas_set.ram -= server_flavor.ram
-        quotas_set.security_groups -= len(server.security_groups)
 
     quotas_set.floating_ips -= len(floating_ips)
 
@@ -441,7 +448,6 @@ def get_available_resources(quotas_set, servers_list, deploying_simulation_insta
         quotas_set.floating_ips -= 1
         quotas_set.instances -= 1
         quotas_set.ram -= simulation_flavor.ram
-        # quotas_set.security_groups -= server.security_groups
 
     return quotas_set
 
