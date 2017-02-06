@@ -206,12 +206,16 @@ def launch_simulation_instance(simulation_instance):
         requests.post("%s/env/TENANT" % instance_api, data={"val": env['OS_TENANT_NAME']})
         requests.post("%s/env/WM_PROJECT_DIR" % instance_api, data={"val": '/openfoam'})
 
-        print "Starting snap collector"
-        t = snap_api.create_openfoam_task(simulation_instance.ip)
-        print "\ttask id %s" % t
+        try:
+            print "Starting snap collector"
+            t = snap_api.create_openfoam_task(simulation_instance.ip)
+            simulation_instance.snap_task_id = t
+            print "\ttask id %s" % t
+        except requests.ConnectionError, requests.Timeout:
+            print traceback.format_exc()
+            print "Snap collector request timed out. Simulation will be ran despite this error."
 
         simulation_instance.instance_id = nova_server.id
-        simulation_instance.snap_task_id = t
 
         print "Starting OpenFOAM simulations"
         solver_command = "/usr/bin/%s -case %s" % (solver_so, simulation_instance_case_folder)
