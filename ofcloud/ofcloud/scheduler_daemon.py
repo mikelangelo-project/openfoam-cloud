@@ -6,8 +6,8 @@ import daemon
 import daemon.pidfile
 
 from ofcloud.models import Instance
-from utils import launch_simulation_instance
 from utils import is_simulation_instance_runnable
+from utils import launch_simulation_instance
 
 
 def do_work(sleep_interval):
@@ -46,3 +46,12 @@ def run(sleep_interval):
 
     with daemon_context:
         do_work(sleep_interval)
+
+
+def shutdown():
+    pidfile = daemon.pidfile.PIDLockFile(path="/tmp/scheduler_daemon.pid")
+
+    pid = pidfile.read_pid()
+    print "Shutting down scheduler daemon with pid %d" % pid
+    os.kill(pid, signal.SIGTERM)
+    print "Scheduler daemon (%d) successfully terminated" % pid
