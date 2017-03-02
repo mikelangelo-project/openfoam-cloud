@@ -7,15 +7,10 @@ import time
 import traceback
 from os import environ as env
 
-import glanceclient.v2.client as glclient
-import neutronclient.v2_0.client as neutron_client
-import novaclient.client as nvclient
 import requests
 from django.conf import settings
-from keystoneauth1 import session
-from keystoneauth1.identity import v2
 
-from ofcloud import network_utils, capstan_utils, case_utils
+from ofcloud import network_utils, capstan_utils, case_utils, openstack_utils
 from ofcloud.models import Instance, Simulation
 from snap import api as snap_api
 
@@ -74,11 +69,9 @@ def launch_simulation_instance(simulation_instance):
     try:
         print "Launching instance %s" % simulation_instance.id
 
-        sess = authenticate()
-
         # Authenticate against required services
-        glance_client = glclient.Client(session=sess)
-        nova_client = nvclient.Client("2", session=sess)
+        glance_client = openstack_utils.get_glance_client()
+        nova_client = openstack_utils.get_nova_client()
 
         case_folder = case_utils.prepare_case_files(simulation)
         case_utils.copy_case_files_to_nfs_location(simulation_instance, case_folder)
@@ -203,7 +196,7 @@ def shutdown_nova_servers(instances):
     :return:
     """
 
-    nova = __get_nova_client()
+    nova = openstack_utils.get_nova_client()
 
     for instance in instances:
         try:
@@ -227,7 +220,7 @@ def split_running_and_orphaned_instances(instances):
     running_instances = []
     orphaned_instances = []
 
-    nova = __get_nova_client()
+    nova = openstack_utils.get_nova_client()
 
     # TODO when deciding on writing unit tests (we really should), this should be a function parameter
     nova_server_ids = {nova_server.id: True for nova_server in nova.servers.list()}
@@ -276,7 +269,7 @@ def get_instances_of_finished_simulations(running_instances):
 
 
 def destroy_simulation(simulation):
-    nova = __get_nova_client()
+    nova = openstack_utils.get_nova_client()
 
     for instance in simulation.instance_set.all():
         try:
@@ -298,11 +291,11 @@ def is_simulation_instance_runnable(simulation_instance):
     """
 
     # get nova client
-    nova = __get_nova_client()
-    neutron = __get_neutron_client()
+    nova = openstack_utils.get_nova_client()
+    neutron = openstack_utils.get_neutron_client()
 
     # get required data
-    flavor_dict = __build_flavor_dict(nova.flavors.list())
+    flavor_dict = openstack_utils.build_flavor_dict(nova.flavors.list())
 
     floating_ips = filter(lambda f_ip: f_ip['fixed_ip_address'] is not None,
                           neutron.list_floatingips(retrieve_all=True)['floatingips'])
@@ -319,8 +312,11 @@ def is_simulation_instance_runnable(simulation_instance):
     total_quotas.instances = min(settings.OPENFOAM_MAX_INSTANCE_USAGE, total_quotas.instances)
 
     # build our own quotas and usages, because nova can not do this at the moment
-    available_quotas = get_available_resources(total_quotas, servers, deploying_simulation_instances, flavor_dict,
-                                               floating_ips)
+    available_quotas = openstack_utils.get_available_resources(total_quotas,
+                                                               servers,
+                                                               deploying_simulation_instances,
+                                                               flavor_dict,
+                                                               floating_ips)
 
     available_quotas.cores -= simulation_flavor.vcpus
     # Here we actually do not know, how many of these instances will have a floating ip assigned,
@@ -337,62 +333,6 @@ def is_simulation_instance_runnable(simulation_instance):
         and available_quotas.floating_ips >= 0 \
         and available_quotas.instances >= 0 \
         and available_quotas.ram >= 0
-
-
-def get_available_resources(quotas_set, servers_list, deploying_simulation_instances, flavor_dict, floating_ips):
-    """
-    Returns a quota set containing only available resources.
-
-    :param quotas_set: a set containing quota data. Should at least contain fields: 'cores', 'floating_ips',
-    'instances', 'ram' and 'security_groups'
-    :type quotas_set: Set
-    :param servers_list: a list of running nova servers
-    :type servers_list: List
-    :param deploying_simulation_instances: List of Instance models representing simulation instances currently being
-    deployed
-    :type deploying_simulation_instances: List
-    :param flavor_dict: a dictionary of available nova flavors. Keys in the dict must be flavor_ids, values
-    must be flavor objects
-    :type flavor_dict: dict
-    :param floating_ips: a list of used floating ips as returned from nova
-    :type floating_ips: List
-    :return: Quota set of remaining resources
-    """
-
-    for server in servers_list:
-        server_flavor = flavor_dict[server.flavor['id']]
-
-        quotas_set.cores -= server_flavor.vcpus
-        quotas_set.instances -= 1
-        quotas_set.ram -= server_flavor.ram
-
-    quotas_set.floating_ips -= len(floating_ips)
-
-    for simulation_instance in deploying_simulation_instances:
-        simulation = Simulation.objects.get(id=simulation_instance.simulation_id)
-        # instance_num = len(Instance.objects.filter(simulation_id=simulation.id))
-        simulation_flavor = flavor_dict[simulation.flavor]
-
-        quotas_set.cores -= simulation_flavor.vcpus
-        # Here we actually do not know, how many of these instances will have a floating ip assigned,
-        # so to be safe we assume they will all have one
-        quotas_set.floating_ips -= 1
-        quotas_set.instances -= 1
-        quotas_set.ram -= simulation_flavor.ram
-
-    return quotas_set
-
-
-def authenticate():
-    # Authenticate using ENV variables
-    auth = v2.Password(
-        auth_url=env['OS_AUTH_URL'],
-        username=env['OS_USERNAME'],
-        password=env['OS_PASSWORD'],
-        tenant_id=env['OS_TENANT_ID'])
-    # Open auth session
-    sess = session.Session(auth=auth)
-    return sess
 
 
 def __import_image_into_glance(glance_client, image_name, simulation, capstan_package_folder):
@@ -414,31 +354,6 @@ def __mount_instance_case_folder(instance_api, nfs_ip, simulation_instance, simu
         "%s/app" % instance_api,
         data={"command": mount_command}
     )
-
-
-def __get_nova_client():
-    return nvclient.Client("2", session=authenticate())
-
-
-def __get_neutron_client():
-    return neutron_client.Client(session=authenticate())
-
-
-def __build_flavor_dict(flavor_list):
-    """
-    Returns a dictionary of flavors. Key - flavor id, value - flavor object.
-
-    :param flavor_list: a list of flavors as returned from nova client.
-    :type flavor_list: list
-    :return: Dictionary containing flavors. Key - flavor id, value - flavor object
-    """
-
-    flavor_dict = {}
-
-    for flavor in flavor_list:
-        flavor_dict[flavor.id] = flavor
-
-    return flavor_dict
 
 
 def __handle_launch_instance_exception(simulation, simulation_instance):
