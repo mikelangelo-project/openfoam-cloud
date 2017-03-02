@@ -1,4 +1,3 @@
-import collections
 import json
 import logging
 import os
@@ -10,7 +9,6 @@ import tempfile
 import time
 import traceback
 from os import environ as env, path
-from subprocess import Popen
 
 import boto
 import boto.s3.connection
@@ -22,7 +20,7 @@ from django.conf import settings
 from keystoneauth1 import session
 from keystoneauth1.identity import v2
 
-from ofcloud import network_utils
+from ofcloud import network_utils, capstan_utils
 from ofcloud.models import Instance, Simulation
 from snap import api as snap_api
 
@@ -126,10 +124,10 @@ def launch_simulation_instance(simulation_instance):
         capstan_package_folder, case_folder = __create_local_temp_folders(simulation)
         __copy_instance_case_files(case_folder, simulation_instance)
 
-        solver_deps, solver_so = get_solver_config()[simulation.solver]
-
         # TODO have an image ready on glance, as now we don't compile the case folder into the OSv image
-        image_name = __init_and_compose_capstan_package(simulation, capstan_package_folder, solver_deps)
+        image_name = capstan_utils.init_and_compose_capstan_package(simulation.simulation_name,
+                                                                    capstan_package_folder,
+                                                                    simulation.solver)
         image, unique_image_name = __import_image_into_glance(
             glance_client,
             image_name,
@@ -221,7 +219,8 @@ def launch_simulation_instance(simulation_instance):
         simulation_instance.nova_server_id = nova_server.id
 
         print "Starting OpenFOAM simulations"
-        solver_command = "/usr/bin/%s -case %s" % (solver_so, simulation_instance_case_folder)
+        solver_command = "/usr/bin/%s -case %s" % (
+            capstan_utils.get_solver_so(simulation.solver), simulation_instance_case_folder)
         instance_api = rest_api_for(simulation_instance.ip)
         requests.put("%s/app/" % instance_api, data={"command": solver_command})
 
@@ -360,8 +359,8 @@ def is_simulation_instance_runnable(simulation_instance):
     total_quotas.instances = min(settings.OPENFOAM_MAX_INSTANCE_USAGE, total_quotas.instances)
 
     # build our own quotas and usages, because nova can not do this at the moment
-    available_quotas = get_available_quotas(total_quotas, servers, deploying_simulation_instances, flavor_dict,
-                                            floating_ips)
+    available_quotas = get_available_resources(total_quotas, servers, deploying_simulation_instances, flavor_dict,
+                                               floating_ips)
 
     available_quotas.cores -= simulation_flavor.vcpus
     # Here we actually do not know, how many of these instances will have a floating ip assigned,
@@ -378,34 +377,6 @@ def is_simulation_instance_runnable(simulation_instance):
         and available_quotas.floating_ips >= 0 \
         and available_quotas.instances >= 0 \
         and available_quotas.ram >= 0
-
-
-def get_solver_config():
-    # Value for each solver consist of a tuple. The first tuple object is the dependency
-    # of the solver, the second one is the command with which we run the simulation using the selected solver.
-    return {
-        "openfoam.pimplefoam":
-            (["eu.mikelangelo-project.openfoam.pimplefoam"], "pimpleFoam.so"),
-        "openfoam.pisofoam":
-            (["eu.mikelangelo-project.openfoam.pisofoam"], "pisoFoam.so"),
-        "openfoam.poroussimplefoam":
-            (["eu.mikelangelo-project.openfoam.poroussimplefoam"], "poroussimpleFoam.so"),
-        "openfoam.potentialfoam":
-            (["eu.mikelangelo-project.openfoam.potentialfoam"], "potentialFoam.so"),
-        "openfoam.rhoporoussimplefoam":
-            (["eu.mikelangelo-project.openfoam.rhoporoussimplefoam"], "rhoporoussimpleFoam.so"),
-        "openfoam.rhosimplefoam":
-            (["eu.mikelangelo-project.openfoam.rhosimplefoam"], "rhosimpleFoam.so"),
-        "openfoam.simplefoam":
-            (["eu.mikelangelo-project.openfoam.simplefoam"], "simpleFoam.so")
-    }
-
-
-def get_common_deps():
-    return [
-        "eu.mikelangelo-project.osv.cli",
-        "eu.mikelangelo-project.osv.nfs"
-    ]
 
 
 def get_available_resources(quotas_set, servers_list, deploying_simulation_instances, flavor_dict, floating_ips):
@@ -473,37 +444,6 @@ def __import_image_into_glance(glance_client, image_name, simulation, capstan_pa
     image = glance_client.images.create(name=unique_image_name, disk_format="qcow2", container_format="bare")
     glance_client.images.upload(image.id, open(mpm_image, 'rb'))
     return image, unique_image_name
-
-
-def __init_and_compose_capstan_package(simulation, capstan_package_folder, solver_deps):
-    # Initialise MPM package
-    cmd = ["capstan", "package", "init",
-           "--name", simulation.simulation_name,
-           "--title", simulation.simulation_name,
-           "--author", env['OS_TENANT_NAME']]
-    # We have to include the required packages in the command.
-    deps = solver_deps + get_common_deps()
-    for d in deps:
-        cmd.append("--require")
-        cmd.append(d)
-
-    # Initialise MPM package at the given path.
-    cmd.append(capstan_package_folder)
-    # Invoke capstan tool.
-    p = Popen(cmd)
-    p.wait()
-    os.chdir(capstan_package_folder)
-    image_name = "temp/%s" % (os.path.basename(capstan_package_folder))
-    # Now we are ready to compose the package into a VM
-    p = Popen([
-        "capstan", "package", "compose",
-        "--size", "500M",
-        "--run", "--redirect=/case/run.log /cli/cli.so",
-        "--pull-missing",
-        image_name])
-    # Wait for the image to be built.
-    p.wait()
-    return image_name
 
 
 def __create_local_temp_folders(simulation):
