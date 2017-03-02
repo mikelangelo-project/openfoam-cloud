@@ -2,16 +2,11 @@ import json
 import logging
 import os
 import os.path
-import re
-import shutil
-import tarfile
 import tempfile
 import time
 import traceback
-from os import environ as env, path
+from os import environ as env
 
-import boto
-import boto.s3.connection
 import glanceclient.v2.client as glclient
 import neutronclient.v2_0.client as neutron_client
 import novaclient.client as nvclient
@@ -20,47 +15,11 @@ from django.conf import settings
 from keystoneauth1 import session
 from keystoneauth1.identity import v2
 
-from ofcloud import network_utils, capstan_utils
+from ofcloud import network_utils, capstan_utils, case_utils
 from ofcloud.models import Instance, Simulation
 from snap import api as snap_api
 
 logger = logging.getLogger(__name__)
-
-
-def update_case(case_path, updates):
-    input_files = {}
-
-    # First, get a list of files that need to be modified
-    for key in updates:
-        file_end_index = key.rfind('/')
-        file_path = key[0:file_end_index]
-        variable = key[file_end_index + 1:]
-
-        if file_path not in input_files:
-            input_files[file_path] = {}
-
-        input_files[file_path][variable] = updates[key]
-
-    output_files = {}
-
-    # Now loop through files and update them.
-    for input_file, variables in input_files.iteritems():
-        file_path = os.path.join(case_path, input_file)
-
-        f = open(file_path, 'r')
-        data = f.read()
-        f.close()
-
-        for var, value in variables.iteritems():
-            data = re.sub(re.compile('^[ \t]*%s\s+.*$' % var, re.MULTILINE), '%s %s;' % (var, value), data)
-
-        output_files[input_file] = file_path
-
-        f = open(file_path, 'w')
-        f.write(data)
-        f.close()
-
-    return output_files
 
 
 def get_floating_ip(nova):
@@ -121,10 +80,11 @@ def launch_simulation_instance(simulation_instance):
         glance_client = glclient.Client(session=sess)
         nova_client = nvclient.Client("2", session=sess)
 
-        capstan_package_folder, case_folder = __create_local_temp_folders(simulation)
-        __copy_instance_case_files(case_folder, simulation_instance)
+        case_folder = case_utils.prepare_case_files(simulation)
+        case_utils.copy_case_files_to_nfs_location(simulation_instance, case_folder)
 
         # TODO have an image ready on glance, as now we don't compile the case folder into the OSv image
+        capstan_package_folder = tempfile.mkdtemp(prefix='ofcloud-capstan-')
         image_name = capstan_utils.init_and_compose_capstan_package(simulation.simulation_name,
                                                                     capstan_package_folder,
                                                                     simulation.solver)
@@ -193,7 +153,7 @@ def launch_simulation_instance(simulation_instance):
         instance_api = rest_api_for(simulation_instance.ip)
 
         # Request input case update given the provided customisations.
-        update_case(simulation_instance.local_case_location, json.loads(simulation_instance.config))
+        case_utils.update_case_files(simulation_instance.local_case_location, json.loads(simulation_instance.config))
 
         nfs_ip = settings.NFS_IP
 
@@ -444,55 +404,6 @@ def __import_image_into_glance(glance_client, image_name, simulation, capstan_pa
     image = glance_client.images.create(name=unique_image_name, disk_format="qcow2", container_format="bare")
     glance_client.images.upload(image.id, open(mpm_image, 'rb'))
     return image, unique_image_name
-
-
-def __create_local_temp_folders(simulation):
-    # Connect to s3
-    s3_conn = boto.connect_s3(
-        aws_access_key_id=settings.S3_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.S3_SECRET_ACCESS_KEY,
-        host=settings.S3_HOST,
-        port=settings.S3_PORT,
-        calling_format=boto.s3.connection.OrdinaryCallingFormat(),
-    )
-    capstan_package_folder = tempfile.mkdtemp(prefix='ofcloud-capstan-')
-    case_folder = tempfile.mkdtemp(prefix='ofcloud-case-')
-    case_path = path.join(case_folder, "case")
-    os.makedirs(case_path)
-    # Get the bucket for the input data.
-    bucket = s3_conn.get_bucket(simulation.container_name)
-    # Get the key from the bucket.
-    input_key = bucket.get_key(simulation.input_data_object)
-    casefile = path.join(case_path, os.path.basename(simulation.input_data_object))
-
-    input_key.get_contents_to_filename(casefile)
-    # Unpack the input case.
-    tar = tarfile.open(casefile, 'r')
-    tar.extractall(case_path)
-    tar.close()
-    # Remove the downloaded file
-    os.remove(casefile)
-    return capstan_package_folder, case_folder
-
-
-def __copy_instance_case_files(case_folder, simulation_instance):
-    local_nfs_mount_location = settings.LOCAL_NFS_MOUNT_LOCATION
-    nfs_mount_folder = settings.NFS_SERVER_MOUNT_FOLDER
-
-    local_instance_files_location = "%s/%s/" % (local_nfs_mount_location, str(simulation_instance.id))
-
-    if os.path.exists(local_instance_files_location):
-        shutil.rmtree(local_instance_files_location)
-
-    shutil.copytree(src=case_folder, dst=local_instance_files_location)
-
-    # Save storage information to model
-    simulation_instance.local_case_location = '%s/case' % local_instance_files_location
-    simulation_instance.nfs_case_location = '%s/%s/case' % (nfs_mount_folder, str(simulation_instance.id))
-    simulation_instance.save()
-
-    # Delete temporary case data
-    shutil.rmtree(case_folder)
 
 
 def __mount_instance_case_folder(instance_api, nfs_ip, simulation_instance, simulation_instance_case_folder):
