@@ -1,5 +1,4 @@
 import os
-import tempfile
 from os import environ as env
 from subprocess import Popen
 

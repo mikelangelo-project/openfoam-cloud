@@ -39,11 +39,10 @@ def prepare_case_files(simulation):
     return case_folder
 
 
-def copy_case_files_to_nfs_location(simulation_instance, case_folder):
-    # TODO provider specific
-    local_nfs_mount_location = settings.LOCAL_NFS_MOUNT_LOCATION
-    nfs_mount_folder = settings.NFS_SERVER_MOUNT_FOLDER
-
+def copy_case_files_to_nfs_location(simulation_instance,
+                                    case_folder,
+                                    local_nfs_mount_location,
+                                    nfs_server_mount_folder):
     simulation_instance_id = simulation_instance.id
     local_instance_files_location = "%s/%s" % (
         local_nfs_mount_location, str(simulation_instance_id))
@@ -58,7 +57,7 @@ def copy_case_files_to_nfs_location(simulation_instance, case_folder):
     # Save storage information to model
     simulation_instance.local_case_location = '%s/case' % local_instance_files_location
     simulation_instance.nfs_case_location = '%s/%s/case' % (
-        nfs_mount_folder, str(simulation_instance_id))
+        nfs_server_mount_folder, str(simulation_instance_id))
     simulation_instance.save()
 
     # Delete temporary case data

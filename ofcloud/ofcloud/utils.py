@@ -1,30 +1,17 @@
 import json
 import logging
-import os
-import os.path
 import tempfile
-import time
 import traceback
-from os import environ as env
 
 import requests
 from django.conf import settings
 
-from ofcloud import network_utils, capstan_utils, case_utils, openstack_utils
+from ofcloud import capstan_utils, case_utils, openstack_utils
 from ofcloud.models import Instance, Simulation
+from provider.provider import ProviderLaunchDto
 from snap import api as snap_api
 
 logger = logging.getLogger(__name__)
-
-
-def get_floating_ip(nova):
-    # Find the first available floating IP
-    for fip in nova.floating_ips.list():
-        if fip.instance_id is None:
-            return fip
-
-    # If there was no available floating IP, create and return new
-    return nova.floating_ips.create('external_network')
 
 
 def rest_api_for(ip):
@@ -59,182 +46,82 @@ def __create_simulation_instances(simulation):
     return instances
 
 
-def launch_simulation_instance(simulation_instance):
-    simulation = Simulation.objects.get(id=simulation_instance.simulation_id)
-    simulation.status = Simulation.Status.DEPLOYING.name
-    simulation.save()
-    simulation_instance.status = Instance.Status.DEPLOYING.name
-    simulation_instance.save()
+def launch_simulation_instance(simulation_instance, simulation_providers):
 
-    try:
-        print "Launching instance %s" % simulation_instance.id
+    is_runnable = False
+    for provider in simulation_providers:
+        if provider.is_simulation_instance_runnable(simulation_instance):
+            is_runnable = True
 
-        # Authenticate against required services
-        glance_client = openstack_utils.get_glance_client()
-        nova_client = openstack_utils.get_nova_client()
+            simulation = Simulation.objects.get(id=simulation_instance.simulation_id)
+            simulation.status = Simulation.Status.DEPLOYING.name
+            simulation.save()
 
-        case_folder = case_utils.prepare_case_files(simulation)
-        case_utils.copy_case_files_to_nfs_location(simulation_instance, case_folder)
+            simulation_instance.provider = provider.get_provider_id()
+            simulation_instance.status = Instance.Status.DEPLOYING.name
+            simulation_instance.save()
 
-        # TODO have an image ready on glance, as now we don't compile the case folder into the OSv image
-        capstan_package_folder = tempfile.mkdtemp(prefix='ofcloud-capstan-')
-        image_name = capstan_utils.init_and_compose_capstan_package(simulation.simulation_name,
-                                                                    capstan_package_folder,
-                                                                    simulation.solver)
-        image, unique_image_name = __import_image_into_glance(
-            glance_client,
-            image_name,
-            simulation,
-            capstan_package_folder)
+            try:
+                print "Launching instance %s with provider %s" % (simulation_instance.id, provider.get_provider_id())
 
-        # Get data for the new server we are about to create.
-        # of_image = nova_client.images.find(name=unique_image_name)
-        of_image = nova_client.images.get(image.id)
-        flavor = nova_client.flavors.find(id=simulation.flavor)
+                # START preparing local files (OSv image, case files ...)
+                case_folder = case_utils.prepare_case_files(simulation)
 
-        unique_server_name = '%s-%s' % (simulation_instance.name, str(simulation_instance.id))
+                case_utils.copy_case_files_to_nfs_location(
+                    simulation_instance,
+                    case_folder,
+                    provider.local_nfs_mount_location,
+                    provider.nfs_server_mount_folder)
 
-        print "Creating required instance %s" % unique_server_name
+                capstan_package_folder = tempfile.mkdtemp(prefix='ofcloud-capstan-')
 
-        # setup network
-        openfoam_network = network_utils.get_openfoam_network_id()
-        nics = [{'net-id': openfoam_network}]
+                image_name = capstan_utils.init_and_compose_capstan_package(
+                    simulation.simulation_name,
+                    capstan_package_folder,
+                    simulation.solver
+                )
+                # FINISH preparing local files (OSv image, case files ...)
 
-        nova_client.servers.create(name=unique_server_name,
-                                   image=of_image,
-                                   flavor=flavor,
-                                   nics=nics
-                                   )
+                launch_dto = ProviderLaunchDto(
+                    simulation_instance=simulation_instance,
+                    image_name=image_name,
+                    capstan_package_folder=capstan_package_folder
+                )
 
-        nova_server_list = nova_client.servers.list(search_opts={'name': unique_server_name})
+                # Prepare instances
+                provider.prepare_instance(launch_dto)
 
-        if len(nova_server_list) != 1:
-            # TODO handle this, do not allow multiple servers with the same unique name
-            #  it would be best if we destroy all we find before spawning a new one
-            raise RuntimeError("Expected 1 server with unique name '%s', instead found %d" % (
-                unique_server_name, len(nova_server_list)))
+                # Customize with case parameters and launch
+                provider.modify_and_run_instance(launch_dto)
+                return launch_dto.simulation_instance
 
-        simulation_instance.nova_server_id = nova_server_list[0].id
+            except:
+                print traceback.format_exc()
+                __handle_launch_instance_exception(simulation, simulation_instance, provider)
 
-        # Wait for the instance to become active
-        while True:
-            nova_server = nova_client.servers.get(simulation_instance.nova_server_id)
-
-            if nova_server.status == 'ACTIVE':
-                simulation_instance.status = Instance.Status.UP.name
-                simulation_instance.save()
-                break
-            time.sleep(0.5)
-
-        # Remove the uploaded image as it is no longer required
-        glance_client.images.delete(image.id)
-
-        print "Associating floating IPs"
-        nova_server = nova_client.servers.get(simulation_instance.nova_server_id)
-        floating_ip = get_floating_ip(nova_client)
-        nova_server.add_floating_ip(floating_ip.ip)
-        simulation_instance.ip = floating_ip.ip
-
-        print "\tInstance %s accessible at %s" % (nova_server.name, floating_ip.ip)
-
-        print "Wait 5s for the router to setup floating IPs"
-        time.sleep(5)
-
-        simulation_instance_case_folder = "/ofcloud_results"
-        print "Customising simulations"
-
-        instance_api = rest_api_for(simulation_instance.ip)
-
-        # Request input case update given the provided customisations.
-        case_utils.update_case_files(simulation_instance.local_case_location, json.loads(simulation_instance.config))
-
-        nfs_ip = settings.NFS_IP
-
-        __mount_instance_case_folder(instance_api, nfs_ip, simulation_instance, simulation_instance_case_folder)
-
-        print "\t\tsetting up the execution environment"
-
-        # Now we need to setup some env variables.
-        requests.post("%s/env/OPENFOAM_CASE" % instance_api,
-                      data={"val": '%s-%s' % (unique_server_name, simulation_instance.name)})
-        requests.post("%s/env/TENANT" % instance_api, data={"val": env['OS_TENANT_NAME']})
-        requests.post("%s/env/WM_PROJECT_DIR" % instance_api, data={"val": '/openfoam'})
-
-        try:
-            print "Starting snap collector"
-            t = snap_api.create_openfoam_task(simulation_instance.ip)
-            simulation_instance.snap_task_id = t
-            print "\ttask id %s" % t
-        except requests.ConnectionError, requests.Timeout:
-            print traceback.format_exc()
-            print "Snap collector request timed out. Simulation will be ran despite this error."
-
-        simulation_instance.nova_server_id = nova_server.id
-
-        print "Starting OpenFOAM simulations"
-        solver_command = "/usr/bin/%s -case %s" % (
-            capstan_utils.get_solver_so(simulation.solver), simulation_instance_case_folder)
-        instance_api = rest_api_for(simulation_instance.ip)
-        requests.put("%s/app/" % instance_api, data={"command": solver_command})
-
-        simulation_instance.status = Instance.Status.RUNNING.name
-        simulation_instance.save()
-        simulation.status = Simulation.Status.RUNNING.name
-        simulation.save()
-
-        return simulation, simulation_instance
-    except:
-        print traceback.format_exc()
-        __handle_launch_instance_exception(simulation, simulation_instance)
-
-
-def shutdown_nova_servers(instances):
-    """
-    Shuts down nova servers with provided ids.
-
-    :param instances: A list of instances
-    :return:
-    """
-
-    nova = openstack_utils.get_nova_client()
-
-    for instance in instances:
-        try:
-            print "Shutting down instances with ids %s" % str(instance.nova_server_id)
-            server = nova.servers.get(instance.nova_server_id)
-            nova.servers.delete(server.id)
-        except:
-            print "Could not shutdown nova server %s" % instance.nova_server_id
-            print traceback.format_exc()
-
-
-def split_running_and_orphaned_instances(instances):
-    """
-    Takes the provided Instance list and separates the containing instances regarding they still have a nova server
-    running or not.
-
-    :param instances: A list of Instance objects
-    :return: tuple, first element is a list of instances with running servers, second element is a list of
-    instances without running servers (orphaned)
-    """
-    running_instances = []
-    orphaned_instances = []
-
-    nova = openstack_utils.get_nova_client()
-
-    # TODO when deciding on writing unit tests (we really should), this should be a function parameter
-    nova_server_ids = {nova_server.id: True for nova_server in nova.servers.list()}
-
-    for instance in instances:
-        if instance.nova_server_id in nova_server_ids:
-            running_instances.append(instance)
+            break
         else:
-            orphaned_instances.append(instance)
+            print "No more free quotas!"
 
-    return running_instances, orphaned_instances
+    if not is_runnable:
+        print("Maximum number of simulation instances already running! "
+              "Pending instances will be run after currently running instances finish")
 
 
-def set_instance_status(instances, status):
+def destroy_simulation(simulation):
+    nova = openstack_utils.get_nova_client()
+
+    for instance in simulation.instance_set.all():
+        try:
+            server = nova.servers.get(instance.instance_id)
+            nova.servers.delete(server)
+
+            snap_api.stop_openfoam_task(instance.snap_task_id)
+        except:
+            print "Instance not found"
+
+
+def update_instance_status(instances, status):
     """
     Updates all the instances corresponding to the ids in instance_ids to the provided status
 
@@ -251,103 +138,23 @@ def get_instances_of_finished_simulations(running_instances):
     running.
 
     :param running_instances: List of instances with a nova server running.
-    :return: Two lists, the first containing nova server IDs and the second instance IDs of running and finished
-    simulation nova servers and instances
+    :return: List of instances which have finished their simulation calculations
     """
 
     finished_instances = []
-    print "Filtering servers with finished calculations ..."
     for instance in running_instances:
         try:
             if __is_openfoam_thread_finished(instance):
                 finished_instances.append(instance)
         except:
             print "Could not determine status of openFOAM thread on instance %s" % instance.id
-
-    print "Instances with finished calculations %s" % [instance.id for instance in finished_instances]
+    if len(finished_instances):
+        print "Instances with finished calculations %s" % [instance.id for instance in finished_instances]
     return finished_instances
 
 
-def destroy_simulation(simulation):
-    nova = openstack_utils.get_nova_client()
-
-    for instance in simulation.instance_set.all():
-        try:
-            server = nova.servers.get(instance.nova_server_id)
-            nova.servers.delete(server)
-
-            snap_api.stop_openfoam_task(instance.snap_task_id)
-        except:
-            print "Instance not found"
-
-
-def is_simulation_instance_runnable(simulation_instance):
-    """
-    Checks whether the simulation can be run at this moment.
-
-    :param simulation_instance: instance object
-    :type simulation_instance: Instance object ofcloud.models.Instance
-    :return: Boolean
-    """
-
-    # get nova client
-    nova = openstack_utils.get_nova_client()
-    neutron = openstack_utils.get_neutron_client()
-
-    # get required data
-    flavor_dict = openstack_utils.build_flavor_dict(nova.flavors.list())
-
-    floating_ips = filter(lambda f_ip: f_ip['fixed_ip_address'] is not None,
-                          neutron.list_floatingips(retrieve_all=True)['floatingips'])
-
-    deploying_simulation_instances = Instance.objects.filter(status=Instance.Status.DEPLOYING.name)
-    simulation = Simulation.objects.get(id=simulation_instance.simulation_id)
-    simulation_flavor = flavor_dict[simulation.flavor]
-
-    servers = nova.servers.list()
-    total_quotas = nova.quotas.get(tenant_id=env['OS_TENANT_ID'])
-
-    # Check which limits are stricter, and use those
-    total_quotas.cores = min(settings.OPENFOAM_MAX_CPU_USAGE, total_quotas.cores)
-    total_quotas.instances = min(settings.OPENFOAM_MAX_INSTANCE_USAGE, total_quotas.instances)
-
-    # build our own quotas and usages, because nova can not do this at the moment
-    available_quotas = openstack_utils.get_available_resources(total_quotas,
-                                                               servers,
-                                                               deploying_simulation_instances,
-                                                               flavor_dict,
-                                                               floating_ips)
-
-    available_quotas.cores -= simulation_flavor.vcpus
-    # Here we actually do not know, how many of these instances will have a floating ip assigned,
-    # so to be safe we assume they will all have one
-    available_quotas.floating_ips -= 1
-    available_quotas.instances -= 1
-    available_quotas.ram -= simulation_flavor.ram
-
-    # Configure logging in the future
-    # logging.debug(str(available_resources))
-
-    return \
-        available_quotas.cores >= 0 \
-        and available_quotas.floating_ips >= 0 \
-        and available_quotas.instances >= 0 \
-        and available_quotas.ram >= 0
-
-
-def __import_image_into_glance(glance_client, image_name, simulation, capstan_package_folder):
-    # Import image into Glance
-    mpm_image = os.path.expanduser(os.path.join("~", ".capstan", "repository",
-                                                image_name, "%s.qemu" % (os.path.basename(capstan_package_folder))))
-    unique_image_name = simulation.image + '_' + str(simulation.id)
-    print "Uploading image %s to Glance" % unique_image_name
-    image = glance_client.images.create(name=unique_image_name, disk_format="qcow2", container_format="bare")
-    glance_client.images.upload(image.id, open(mpm_image, 'rb'))
-    return image, unique_image_name
-
-
-def __mount_instance_case_folder(instance_api, nfs_ip, simulation_instance, simulation_instance_case_folder):
-    nfs_mount = 'nfs://%s%s %s' % (nfs_ip, simulation_instance.nfs_case_location, simulation_instance_case_folder)
+def mount_instance_case_folder(instance_api, nfs_address, simulation_instance, simulation_instance_case_folder):
+    nfs_mount = 'nfs://%s%s %s' % (nfs_address, simulation_instance.nfs_case_location, simulation_instance_case_folder)
     print "\t\tmounting network file storage with %s" % nfs_mount
     mount_command = "/tools/mount-nfs.so %s" % nfs_mount
     requests.put(
@@ -356,10 +163,13 @@ def __mount_instance_case_folder(instance_api, nfs_ip, simulation_instance, simu
     )
 
 
-def __handle_launch_instance_exception(simulation, simulation_instance):
+def __handle_launch_instance_exception(simulation, simulation_instance, provider):
     simulation_instance.retry_attempts += 1
     print "Setting instance %s retry attempts to %d/%d" % \
           (simulation_instance.id, simulation_instance.retry_attempts, settings.OPENFOAM_SIMULATION_MAX_RETRIES)
+
+    if simulation_instance.instance_id:
+        provider.shutdown_instances([simulation_instance])
 
     max_retries = settings.OPENFOAM_SIMULATION_MAX_RETRIES
     if simulation_instance.retry_attempts < max_retries:
@@ -371,7 +181,6 @@ def __handle_launch_instance_exception(simulation, simulation_instance):
         simulation_instance.save()
 
         simulation_instances = Instance.objects.filter(simulation=simulation.id)
-        print "Other instances in this simulation %s" % str(simulation_instances)
 
         all_failed = True
         for simulation_instance in simulation_instances:
@@ -381,7 +190,9 @@ def __handle_launch_instance_exception(simulation, simulation_instance):
                 break
 
         if all_failed:
-            print("All underlying instances have failed, sending simulation %s to FAILED state" % simulation.id)
+            print(
+                "All underlying instances have failed, "
+                "sending simulation %s to FAILED state" % simulation.id)
             simulation.status = Instance.Status.FAILED.name
             simulation.save()
 

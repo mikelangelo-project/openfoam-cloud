@@ -1,9 +1,11 @@
 import os
 import signal
 import time
+from importlib import import_module
 
 import daemon
 import daemon.pidfile
+from django.conf import settings
 
 import utils
 from ofcloud.models import Instance
@@ -13,43 +15,48 @@ def do_work(sleep_interval):
     import django
     django.setup()
 
+    # create providers
+    simulation_providers = []
+    for provider_config in settings.PROVIDER_CONFIG:
+        package, module = provider_config.get('TYPE').rsplit('.', 1)
+
+        mod = import_module(package)
+        provider = getattr(mod, module)
+        simulation_providers.append(provider(provider_config.get('NAME'), provider_config))
+
     while True:
-        __poll_and_shutdown_instances()
-        __poll_and_run_instances()
+        __poll_and_shutdown_instances(simulation_providers)
+        __poll_and_run_instances(simulation_providers)
         time.sleep(sleep_interval)
 
 
-def __poll_and_shutdown_instances():
-    running_instances = Instance.objects.filter(status=Instance.Status.RUNNING.name)
-    print "Instances with status RUNNING %s" % str(running_instances)
+def __poll_and_shutdown_instances(simulation_providers):
+    print "Polling instances for shutdown"
+    for provider in simulation_providers:
+        provider_id = provider.get_provider_id()
+        print "Using provider %s" % provider_id
 
-    # split instances regarding they still have a server running or not (orphaned)
-    running_instances, orphaned_instances = utils.split_running_and_orphaned_instances(running_instances)
+        running_instances, orphaned_instances = provider.split_running_and_orphaned_instances(
+            Instance.objects.filter(status=Instance.Status.RUNNING.name, provider=provider_id))
 
-    # print "Running instance ids %s" % running_instance_ids
-    # print "Orphaned instance ids %s" % orphaned_instance_ids
+        # Mark any orphaned instance objects as complete
+        utils.update_instance_status(orphaned_instances, Instance.Status.COMPLETE.name)
+        finished_instances = utils.get_instances_of_finished_simulations(running_instances)
 
-    # mark orphaned instances as completed
-    utils.set_instance_status(orphaned_instances, Instance.Status.COMPLETE.name)
+        if len(finished_instances) or len(running_instances) or len(orphaned_instances):
+            print "Running/Finished/Orphaned: %d/%d/%d" % (
+                len(running_instances), len(finished_instances), len(orphaned_instances))
 
-    # get instances of finished simulations
-    finished_instances = utils.get_instances_of_finished_simulations(running_instances)
-
-    # shutdown
-    utils.shutdown_nova_servers(finished_instances)
-    utils.set_instance_status(finished_instances, Instance.Status.COMPLETE.name)
+        provider.shutdown_instances(finished_instances)
+        utils.update_instance_status(finished_instances, Instance.Status.COMPLETE.name)
 
 
-def __poll_and_run_instances():
+def __poll_and_run_instances(simulation_providers):
     pending_instances = Instance.objects.filter(status=Instance.Status.PENDING.name)
     print('Found %d instances in PENDING state.' % len(pending_instances))
 
     for pending_instance in pending_instances:
-        if utils.is_simulation_instance_runnable(pending_instance):
-            utils.launch_simulation_instance(pending_instance)
-        else:
-            print("Maximum number of simulation instances already running! "
-                  "Pending instances will be run after currently running instances finish")
+        utils.launch_simulation_instance(pending_instance, simulation_providers)
 
 
 def run(sleep_interval):

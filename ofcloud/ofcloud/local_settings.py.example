@@ -24,11 +24,30 @@ OPENFOAM_NETWORK_GATEWAY_IP = 'your gateway IP usually the first IP in CIDR rang
 # NFS server, then just point to the folder where you want the simulation results to be saved
 LOCAL_NFS_MOUNT_LOCATION = "/mnt/nfs_mount_example"
 
-# Network file storage server ip address
-NFS_IP = 'nfs server ip'
-
-# Location where OpenFOAM case files and results will be saved on the NFS server
-NFS_SERVER_MOUNT_FOLDER = "/export/openfoam_simulations_example"
+# Configuration of compute providers available for executing OpenFOAM simulations
+PROVIDER_CONFIG = [
+    {
+        # Provider name
+        'NAME': 'Openstack',
+        # Type of provider, use class name of provider implementation
+        'TYPE': 'ofcloud.provider.provider_openstack.OpenstackProvider',
+        # Network file storage server ip address for this provider
+        'NFS_ADDRESS': '10.10.0.1',
+        # Location of locally mounted NFS folder. If the scheduler is running on the same machine as the NFS server,
+        # use the folder where you want the simulation results to be saved in
+        'LOCAL_NFS_MOUNT_LOCATION': '/mnt/openstack_nfs',
+        # Location OpenFOAM case files and results on the NFS server
+        'NFS_SERVER_MOUNT_FOLDER': '/export/openfoam-cases',
+        # Overrides the number of maximum cpu's used for calculation. Example: openstack allows use of maximum 24 vcpus.
+        # Our setting allows only 12. The scheduler_deamon will run new simulations until 12 vcpu's are used on nova.
+        # If this setting value is higher than nova's max VCPU quota, the latter will be respected.
+        'MAX_CPU_USAGE': 4,
+        # Overrides the number of maximum instances used. Example: openstack allows use of 10 instances. Our setting
+        # allows only 5. The scheduler_deamon will run new simulations until 5 instances are used on nova.
+        # If this setting value is higher than nova's max instance quota, the latter will be respected.
+        'MAX_INSTANCE_USAGE': 2
+    }
+]
 
 # Scheduler daemon settings
 SCHEDULER_REFRESH_INTERVAL_SECONDS = 'desired scheduler daemon refresh interval in seconds'
@@ -36,13 +55,3 @@ SCHEDULER_REFRESH_INTERVAL_SECONDS = 'desired scheduler daemon refresh interval 
 # Maximum number of launch retries of one instance. When this limit is reached, the simulation instance enters the
 # 'FAILED' state
 OPENFOAM_SIMULATION_MAX_RETRIES = 3
-
-# Overrides the number of maximum NOVA vcpu's used. Example: openstack allows use of maximum 24 vcpus. Our setting
-# allows only 12. The scheduler_deamon will run new simulations until 12 vcpu's are used on nova.
-# If this setting value is higher than nova's max VCPU quota, the latter will be respected.
-OPENFOAM_MAX_CPU_USAGE = 18
-
-# Overrides the number of maximum NOVA instances used. Example: openstack allows use of 10 instances. Our setting
-# allows only 5. The scheduler_deamon will run new simulations until 5 oinstances are used on nova.
-# If this setting value is higher than nova's max instance quota, the latter will be respected.
-OPENFOAM_MAX_INSTANCE_USAGE = 8
