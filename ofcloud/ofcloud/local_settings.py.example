@@ -46,6 +46,27 @@ PROVIDER_CONFIG = [
         # allows only 5. The scheduler_deamon will run new simulations until 5 instances are used on nova.
         # If this setting value is higher than nova's max instance quota, the latter will be respected.
         'MAX_INSTANCE_USAGE': 2
+    },
+    {
+        # Provider name
+        'NAME': 'Amazon',
+        # Type of provider, use class name of provider implementation
+        'TYPE': 'ofcloud.provider.provider_amazon.AmazonProvider',
+        # Network file storage server ip address for this provider
+        'NFS_ADDRESS': '10.10.0.1',
+        # Location of locally mounted NFS folder. If the scheduler is running on the same machine as the NFS server,
+        # use the folder where you want the simulation results to be saved in
+        'LOCAL_NFS_MOUNT_LOCATION': '/mnt/amazon_nfs',
+        # Location OpenFOAM case files and results on the NFS server
+        'NFS_SERVER_MOUNT_FOLDER': '/export/openfoam-cases',
+        # Overrides the number of maximum cpu's used for calculation. For amazon this means the maximum total number of
+        # cpus used by openFoam calculations.
+        'MAX_CPU_USAGE': 4,
+        # Overrides the number of maximum instances used. For amazon this means the maximum total number of virtual
+        # machines used by openFoam calculations.
+        'MAX_INSTANCE_USAGE': 2,
+        # Amazon region, where this provider will deploy virtual machines
+        'REGION': 'us-west-2'
     }
 ]
 

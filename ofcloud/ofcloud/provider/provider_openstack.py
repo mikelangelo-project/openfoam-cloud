@@ -1,4 +1,3 @@
-import json
 import os
 import time
 import traceback
@@ -6,14 +5,11 @@ from os import environ as env
 
 import glanceclient.v2.client as glclient
 import novaclient.client as nvclient
-import requests
 from keystoneauth1 import session
 from keystoneauth1.identity import v2
 
-from ofcloud import case_utils
 from ofcloud import network_utils
 from ofcloud import openstack_utils
-from ofcloud import utils, capstan_utils
 from ofcloud.models import Instance, Simulation
 from provider import Provider
 
@@ -21,12 +17,7 @@ from provider import Provider
 class OpenstackProvider(Provider):
     def __init__(self, provider_id, provider_config):
         # TODO validation, raise errors if properties missing from config
-        self.id = provider_id
-        self.local_nfs_mount_location = provider_config.get('LOCAL_NFS_MOUNT_LOCATION')
-        self.nfs_server_mount_folder = provider_config.get('NFS_SERVER_MOUNT_FOLDER')
-        self.nfs_address = provider_config.get('NFS_ADDRESS')
-        self.max_cpu_usage = provider_config.get('MAX_CPU_USAGE')
-        self.max_instance_usage = provider_config.get('MAX_INSTANCE_USAGE')
+        super(OpenstackProvider, self).__init__(provider_id, provider_config)
 
     def prepare_instance(self, launch_dto):
         sess = self.__authenticate()
@@ -97,44 +88,6 @@ class OpenstackProvider(Provider):
 
         print "Wait 5s for the router to setup floating IPs"
         time.sleep(5)
-
-
-    def modify_and_run_instance(self, launch_dto):
-        # START modifying the running server, setup nfs mount, snap collector, some ENV variables and
-        # start the simulation
-        simulation_instance_case_folder = "/case"
-        print "Customising simulations"
-        instance_api = utils.rest_api_for(launch_dto.simulation_instance.ip)
-        # Request input case update given the provided customisations.
-        case_utils.update_case_files(launch_dto.simulation_instance.local_case_location,
-                                     json.loads(launch_dto.simulation_instance.config))
-        nfs_address = self.nfs_address
-        utils.mount_instance_case_folder(instance_api, nfs_address, launch_dto.simulation_instance,
-                                         simulation_instance_case_folder)
-
-        print "\t\tsetting up the execution environment"
-
-        # Now we need to setup some env variables.
-        requests.post("%s/env/OPENFOAM_CASE" % instance_api,
-                      data={"val": '%s-%s' % (
-                          launch_dto.unique_server_name, launch_dto.simulation_instance.name)})
-        requests.post("%s/env/TENANT" % instance_api, data={"val": env['OS_TENANT_NAME']})
-        requests.post("%s/env/WM_PROJECT_DIR" % instance_api, data={"val": '/openfoam'})
-
-        self.start_snap_collector(launch_dto)
-
-        print "Starting OpenFOAM simulations"
-        solver_so = capstan_utils.get_solver_so(launch_dto.simulation_instance.simulation.solver)
-        solver_command = "/usr/bin/%s -case %s" % (solver_so, simulation_instance_case_folder)
-        instance_api = utils.rest_api_for(launch_dto.simulation_instance.ip)
-        requests.put("%s/app/" % instance_api, data={"command": solver_command}, timeout=30)
-
-        launch_dto.simulation_instance.status = Instance.Status.RUNNING.name
-        launch_dto.simulation_instance.save()
-        launch_dto.simulation_instance.simulation.status = Simulation.Status.RUNNING.name
-        launch_dto.simulation_instance.simulation.save()
-
-        return launch_dto
 
     def is_simulation_instance_runnable(self, simulation_instance):
         """
@@ -214,9 +167,6 @@ class OpenstackProvider(Provider):
                 print "Could not shutdown nova server %s" % instance.instance_id
                 print traceback.format_exc()
 
-    def get_provider_id(self):
-        return self.id
-
     def __import_image_into_glance(self, glance_client, image_name, simulation, capstan_package_folder):
         # Import image into Glance
         mpm_image = os.path.expanduser(os.path.join("~", ".capstan", "repository",
@@ -250,6 +200,3 @@ class OpenstackProvider(Provider):
         # Open auth session
         sess = session.Session(auth=auth)
         return sess
-
-    def get_local_nfs_mount_location(self):
-        return self.local_nfs_mount_location
