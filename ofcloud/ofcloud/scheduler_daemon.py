@@ -1,5 +1,6 @@
 import os
 import signal
+import threading
 import time
 from importlib import import_module
 
@@ -24,9 +25,20 @@ def do_work(sleep_interval):
         provider = getattr(mod, module)
         simulation_providers.append(provider(provider_config.get('NAME'), provider_config))
 
+    threads = {
+        'shutdown': None,
+        'run': None
+    }
+
     while True:
-        __poll_and_shutdown_instances(simulation_providers)
-        __poll_and_run_instances(simulation_providers)
+        if not threads['shutdown'] or not threads['shutdown'].isAlive():
+            threads['shutdown'] = threading.Thread(target=__poll_and_shutdown_instances, args=(simulation_providers,))
+            threads['shutdown'].start()
+
+        if not threads['run'] or not threads['run'].isAlive():
+            threads['run'] = threading.Thread(target=__poll_and_run_instances, args=(simulation_providers,))
+            threads['run'].start()
+
         time.sleep(sleep_interval)
 
 

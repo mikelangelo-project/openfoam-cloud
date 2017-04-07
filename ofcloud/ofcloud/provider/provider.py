@@ -105,11 +105,3 @@ class Provider:
         except requests.ConnectionError, requests.Timeout:
             print traceback.format_exc()
             print "Snap collector request timed out. Simulation will be ran despite this error."
-
-
-class ProviderLaunchDto:
-    def __init__(self, simulation_instance, image_name, capstan_package_folder):
-        self.simulation_instance = simulation_instance
-        self.image_name = image_name
-        self.capstan_package_folder = capstan_package_folder
-        self.unique_server_name = None

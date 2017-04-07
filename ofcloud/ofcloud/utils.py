@@ -8,7 +8,7 @@ from django.conf import settings
 
 from ofcloud import capstan_utils, case_utils, openstack_utils
 from ofcloud.models import Instance, Simulation
-from provider.provider import ProviderLaunchDto
+from ofcloud.provider.dto import ProviderLaunchDto
 from snap import api as snap_api
 
 logger = logging.getLogger(__name__)
