@@ -53,24 +53,24 @@ def __get_solver_config():
     # If solver image won't exist we will still create it with capstan
     return {
         "openfoam.pimplefoam":
-            (["eu.mikelangelo-project.openfoam.pimplefoam"], "pimpleFoam.so"),
+            (["openfoam.pimplefoam-2.4.0"], "pimpleFoam.so"),
         "openfoam.pisofoam":
-            (["eu.mikelangelo-project.openfoam.pisofoam"], "pisoFoam.so"),
+            (["openfoam.pisofoam-2.4.0"], "pisoFoam.so"),
         "openfoam.poroussimplefoam":
-            (["eu.mikelangelo-project.openfoam.poroussimplefoam"], "poroussimpleFoam.so"),
+            (["openfoam.poroussimplefoam-2.4.0"], "poroussimpleFoam.so"),
         "openfoam.potentialfoam":
-            (["eu.mikelangelo-project.openfoam.potentialfoam"], "potentialFoam.so"),
+            (["openfoam.potentialfoam-2.4.0"], "potentialFoam.so"),
         "openfoam.rhoporoussimplefoam":
-            (["eu.mikelangelo-project.openfoam.rhoporoussimplefoam"], "rhoporoussimpleFoam.so"),
+            (["openfoam.rhoporoussimplefoam-2.4.0"], "rhoporoussimpleFoam.so"),
         "openfoam.rhosimplefoam":
-            (["eu.mikelangelo-project.openfoam.rhosimplefoam"], "rhosimpleFoam.so"),
+            (["openfoam.rhosimplefoam-2.4.0"], "rhosimpleFoam.so"),
         "openfoam.simplefoam":
-            (["eu.mikelangelo-project.openfoam.simplefoam"], "simpleFoam.so")
+            (["openfoam.simplefoam-2.4.0"], "simpleFoam.so")
     }
 
 
 def __get_common_deps():
     return [
-        "eu.mikelangelo-project.osv.cli",
-        "eu.mikelangelo-project.osv.nfs"
+        "osv.cli",
+        "osv.nfs"
     ]
