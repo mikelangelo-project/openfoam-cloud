@@ -225,14 +225,10 @@ def __is_openfoam_thread_finished(instance):
     :param instance: Instance object of the simulation we query for thread info
     :return: True if the thread is terminated or not present, False if it is still executing
     """
-    openfoam_thread_present = False
     thread_list = __get_instance_thread_info(instance)
+    openfoam_threads = filter(lambda t: t['id'] == instance.thread_id, thread_list)
 
-    for thread in thread_list:
-        if thread['name'] == '/usr/bin/simple':
-            print "Found openFOAM thread! %s" % thread
-            openfoam_thread_present = True
-            if thread['status'] == 'terminated':
-                return True
-
-    return not openfoam_thread_present
+    if len(openfoam_threads) == 0:
+        return True
+    else:
+        return openfoam_threads[0]['status'] == 'terminated'

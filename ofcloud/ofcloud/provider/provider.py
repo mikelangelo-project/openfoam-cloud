@@ -87,8 +87,11 @@ class Provider:
         print "Starting OpenFOAM simulations"
         solver_so = capstan_utils.get_solver_so(launch_dto.simulation_instance.simulation.solver)
         solver_command = "/usr/bin/%s -case %s" % (solver_so, simulation_instance_case_folder)
-        requests.put("%s/app/" % instance_api, data={"command": solver_command}, timeout=30)
+        req = requests.put("%s/app/" % instance_api, data={"command": solver_command}, timeout=30)
 
+        # if request to /app successful it will return id of the openfoam thread, if not it should fail
+        # strip double quotes, because request returns '"200"' which fails when parsing to int
+        launch_dto.simulation_instance.thread_id = int(req.text.strip('"'))
         launch_dto.simulation_instance.status = Instance.Status.RUNNING.name
         launch_dto.simulation_instance.save()
         launch_dto.simulation_instance.simulation.status = Simulation.Status.RUNNING.name

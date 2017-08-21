@@ -49,5 +49,7 @@ class Instance(models.Model):
 
     retry_attempts = models.IntegerField(default=0)
 
+    thread_id = models.IntegerField(null=True)
+
     class Meta:
         ordering = ('name',)
