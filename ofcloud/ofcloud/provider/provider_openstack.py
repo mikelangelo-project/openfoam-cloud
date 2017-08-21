@@ -167,6 +167,21 @@ class OpenstackProvider(Provider):
                 print "Could not shutdown nova server %s" % instance.instance_id
                 print traceback.format_exc()
 
+    def get_instance_cpus(self, instance_simulation):
+        """
+        Returns number of cpus this simulation instance will have/does have
+
+        :param instance_simulation: Instance simulation
+        :return:
+        """
+        nova = openstack_utils.get_nova_client()
+
+        try:
+            return nova.flavors.get(instance_simulation.flavor).vcpus
+        except:
+            print "Could not get flavor VCPUs for flavor_id %s, using single threaded mode" % instance_simulation.flavor
+            return 1
+
     def __import_image_into_glance(self, glance_client, image_name, simulation, capstan_package_folder):
         # Import image into Glance
         mpm_image = os.path.expanduser(os.path.join("~", ".capstan", "repository",

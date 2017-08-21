@@ -11,7 +11,7 @@ import boto.s3.connection
 from django.conf import settings
 
 
-def prepare_case_files(simulation):
+def prepare_case_files(simulation, instance_cpus):
     # Connect to s3
     s3_conn = boto.connect_s3(
         aws_access_key_id=settings.S3_ACCESS_KEY_ID,
@@ -36,6 +36,15 @@ def prepare_case_files(simulation):
     tar.close()
     # Remove the downloaded file
     os.remove(casefile)
+
+    # If any parallelisation, use the corresponding decomposeParDict
+    if instance_cpus > 1:
+        decompose_par_dict_path = path.join(case_path, "system/decomposeParDict")
+        os.remove(decompose_par_dict_path)
+        shutil.copyfile(
+            "ofcloud/templates/decomposeParDict_%scpu" % instance_cpus,
+            decompose_par_dict_path
+        )
     return case_folder
 
 
@@ -77,7 +86,6 @@ def update_case_files(case_path, case_updates):
             input_files[file_path] = {}
 
         input_files[file_path][variable] = case_updates[key]
-
     output_files = {}
 
     # Now loop through files and update them.

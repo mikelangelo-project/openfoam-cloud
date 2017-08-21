@@ -46,8 +46,7 @@ def __create_simulation_instances(simulation):
     return instances
 
 
-def launch_simulation_instance(simulation_instance, simulation_providers):
-
+def prepare_simulation_instance(simulation_instance, simulation_providers):
     is_runnable = False
     for provider in simulation_providers:
         if provider.is_simulation_instance_runnable(simulation_instance):
@@ -64,8 +63,11 @@ def launch_simulation_instance(simulation_instance, simulation_providers):
             try:
                 print "Launching instance %s with provider %s" % (simulation_instance.id, provider.get_provider_id())
 
+                simulation_instance.parallelisation = provider.get_instance_cpus(simulation_instance.simulation)
+                simulation_instance.save()
+
                 # START preparing local files (OSv image, case files ...)
-                case_folder = case_utils.prepare_case_files(simulation)
+                case_folder = case_utils.prepare_case_files(simulation, simulation_instance.parallelisation)
 
                 case_utils.copy_case_files_to_nfs_location(
                     simulation_instance,
@@ -91,8 +93,8 @@ def launch_simulation_instance(simulation_instance, simulation_providers):
                 # Prepare instances
                 provider.prepare_instance(launch_dto)
 
-                # Customize with case parameters and launch
-                provider.modify_and_run_instance(launch_dto)
+                # Customize with case parameters
+                provider.prepare_instance_env(launch_dto)
                 return launch_dto.simulation_instance
 
             except:
@@ -132,24 +134,24 @@ def update_instance_status(instances, status):
     Instance.objects.filter(id__in=[instance.id for instance in instances]).update(status=status)
 
 
-def get_instances_of_finished_simulations(running_instances):
+def get_instances_with_finished_openfoam_thread(instances):
     """
-    Takes the provided running_instance_ids and filters out the instances which have the openFOAM solver thread still
-    running.
-
-    :param running_instances: List of instances with a nova server running.
+    Takes the provided running_instance_ids and filters out the instances which have the openFOAM thread still running.
+    
+    :param instances: List of instances with a nova server running.
     :return: List of instances which have finished their simulation calculations
     """
 
     finished_instances = []
-    for instance in running_instances:
+    for instance in instances:
         try:
             if __is_openfoam_thread_finished(instance):
                 finished_instances.append(instance)
         except:
             print "Could not determine status of openFOAM thread on instance %s" % instance.id
+            print traceback.format_exc()
     if len(finished_instances):
-        print "Instances with finished calculations %s" % [instance.id for instance in finished_instances]
+        print "Instances with finished openFOAM thread: %s" % [instance.id for instance in finished_instances]
     return finished_instances
 
 

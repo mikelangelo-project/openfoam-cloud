@@ -9,6 +9,7 @@ from provider import Provider
 class AmazonProvider(Provider):
     AMI_ID = 'ami-114ef271'
     INSTANCE_TYPE = 't2.small'
+    INSTANCE_CPUS = 1
     SECURITY_GROUPS = ["All Open"]
 
     def __init__(self, provider_id, provider_config):
@@ -83,6 +84,15 @@ class AmazonProvider(Provider):
                 conn.terminate_instances(server_ids)
             except Exception as ex:
                 print "Failed shutting down instances %s, msg: %s" % (instances, ex.message)
+
+    def get_instance_cpus(self, instance_simulation):
+        """
+        Returns number of cpus this simulation instance will have/does have
+
+        :param instance_simulation: Instance simulation
+        :return:
+        """
+        return self.INSTANCE_CPUS
 
     def __wait_for(self, ec2_obj, status='available'):
         while ec2_obj.state != status:

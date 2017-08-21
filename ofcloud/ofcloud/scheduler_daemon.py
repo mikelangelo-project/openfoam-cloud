@@ -27,33 +27,60 @@ def do_work(sleep_interval):
 
     threads = {
         'shutdown': None,
-        'run': None
+        'reconstruct': None,
+        'run': None,
+        'prepare': None
     }
 
     while True:
         if not threads['shutdown'] or not threads['shutdown'].isAlive():
-            threads['shutdown'] = threading.Thread(target=__poll_and_shutdown_instances, args=(simulation_providers,))
+            threads['shutdown'] = threading.Thread(target=__poll_for_shutdown, args=(simulation_providers,))
             threads['shutdown'].start()
 
+        if not threads['reconstruct'] or not threads['reconstruct'].isAlive():
+            threads['reconstruct'] = threading.Thread(target=__poll_for_reconstruction, args=(simulation_providers,))
+            threads['reconstruct'].start()
+
         if not threads['run'] or not threads['run'].isAlive():
-            threads['run'] = threading.Thread(target=__poll_and_run_instances, args=(simulation_providers,))
+            threads['run'] = threading.Thread(target=__poll_for_run, args=(simulation_providers,))
             threads['run'].start()
+
+        if not threads['prepare'] or not threads['prepare'].isAlive():
+            threads['prepare'] = threading.Thread(target=__poll_for_prepare, args=(simulation_providers,))
+            threads['prepare'].start()
 
         time.sleep(sleep_interval)
 
 
-def __poll_and_shutdown_instances(simulation_providers):
+def __poll_for_shutdown(simulation_providers):
+    """
+    Polls instances ready for shutdown. 
+    
+    Instances qualify for shutdown if they are either in Instance.Status.RUNNING or Instance.Status.RECONSTRUCTING
+    state and the openFOAM thread is terminated. Orphaned instances are sent to Instance.Status.COMPLETE state.
+    
+    :param simulation_providers: 
+    :return: 
+    """
+
     print "Polling instances for shutdown"
     for provider in simulation_providers:
         provider_id = provider.get_provider_id()
         print "Using provider %s" % provider_id
 
-        running_instances, orphaned_instances = provider.split_running_and_orphaned_instances(
+        running_instances, orphans_1 = provider.split_running_and_orphaned_instances(
             Instance.objects.filter(status=Instance.Status.RUNNING.name, provider=provider_id))
+
+        reconstructing_instances, orphans_2 = provider.split_running_and_orphaned_instances(
+            Instance.objects.filter(status=Instance.Status.RECONSTRUCTING.name, provider=provider_id))
+
+        orphaned_instances = orphans_1 + orphans_2
 
         # Mark any orphaned instance objects as complete
         utils.update_instance_status(orphaned_instances, Instance.Status.COMPLETE.name)
-        finished_instances = utils.get_instances_of_finished_simulations(running_instances)
+
+        finished_instances = utils.get_instances_with_finished_openfoam_thread(
+            running_instances + reconstructing_instances)
 
         if len(finished_instances) or len(running_instances) or len(orphaned_instances):
             print "Running/Finished/Orphaned: %d/%d/%d" % (
@@ -63,12 +90,76 @@ def __poll_and_shutdown_instances(simulation_providers):
         utils.update_instance_status(finished_instances, Instance.Status.COMPLETE.name)
 
 
-def __poll_and_run_instances(simulation_providers):
+def __poll_for_reconstruction(simulation_providers):
+    """
+    Polls instances ready for reconstruction and runs reconstructPar command on them.
+    
+    Instances qualify for reconstruction if they are in Instance.Status.RUNNING_MPI state and the openFOAM thread
+    is terminated. Orphaned instances are sent to Instance.Status.COMPLETE state.
+    
+    :param simulation_providers: 
+    :return: 
+    """
+    print "Polling instances for reconstruction"
+    for provider in simulation_providers:
+        provider_id = provider.get_provider_id()
+        print "Using provider %s" % provider_id
+
+        running_mpi_instances, orphaned_instances = provider.split_running_and_orphaned_instances(
+            Instance.objects.filter(status=Instance.Status.RUNNING_MPI.name, provider=provider_id))
+
+        utils.update_instance_status(orphaned_instances, Instance.Status.COMPLETE.name)
+
+        ready_for_reconstruction = utils.get_instances_with_finished_openfoam_thread(running_mpi_instances)
+
+        for instance in ready_for_reconstruction:
+            provider.run_reconstruction(instance)
+
+
+def __poll_for_prepare(simulation_providers):
+    """
+    Polls instances ready for preparation of openFOAM.
+    
+    Instances qualify for preparation if they are in Instance.Status.PENDING state.
+    
+    :param simulation_providers: 
+    :return: 
+    """
+    print "Polling instances for preparation"
+
     pending_instances = Instance.objects.filter(status=Instance.Status.PENDING.name)
     print('Found %d instances in PENDING state.' % len(pending_instances))
 
-    for pending_instance in pending_instances:
-        utils.launch_simulation_instance(pending_instance, simulation_providers)
+    for instance in pending_instances:
+        utils.prepare_simulation_instance(instance, simulation_providers)
+
+
+def __poll_for_run(simulation_providers):
+    """
+    Polls instances ready to run openFOAM simulations. 
+    
+    Instances qualify for running if they are in Instance.Status.READY state or in Instance.Status.DECOMPOSING state
+    with openFOAM thread terminated.
+    
+    :param simulation_providers: 
+    :return: 
+    """
+
+    decomposing_instances = Instance.objects.filter(status=Instance.Status.DECOMPOSING.name)
+    finished_decomposing_instances = utils.get_instances_with_finished_openfoam_thread(decomposing_instances)
+
+    utils.update_instance_status(finished_decomposing_instances, Instance.Status.READY.name)
+
+    print "Polling instances for run simulation"
+
+    ready_instances = Instance.objects.filter(status=Instance.Status.READY.name)
+
+    print('Found %d instances in READY state.' % len(ready_instances))
+
+    for ready_instance in ready_instances:
+        instance_provider = [provider for provider in simulation_providers if
+                             provider.id == ready_instance.provider]
+        instance_provider[0].run_simulation(ready_instance)
 
 
 def run(sleep_interval):
@@ -82,7 +173,11 @@ def run(sleep_interval):
     stdout = open("/tmp/scheduler_daemon_%s.log" % now_seconds, "w+")
     stderr = open("/tmp/scheduler_daemon_error_%s.log" % now_seconds, "w+")
 
-    daemon_context = daemon.DaemonContext(stdout=stdout, stderr=stderr, detach_process=True, pidfile=pidfile)
+    daemon_context = daemon.DaemonContext(stdout=stdout,
+                                          stderr=stderr,
+                                          detach_process=True,
+                                          pidfile=pidfile,
+                                          working_directory=os.getcwd())
 
     with daemon_context:
         do_work(sleep_interval)

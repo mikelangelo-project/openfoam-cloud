@@ -5,10 +5,13 @@ from os import environ as env
 
 import requests
 
+from ofcloud import capstan_utils
 from ofcloud import case_utils
-from ofcloud import utils, capstan_utils
+from ofcloud import utils
 from ofcloud.models import Instance, Simulation
 from snap import api as snap_api
+
+SIMULATION_INSTANCE_CASE_FOLDER = "/case"
 
 
 class Provider:
@@ -40,6 +43,10 @@ class Provider:
     def shutdown_instances(self, instances):
         raise NotImplementedError(self.NOT_IMPLEMENTED_MSG)
 
+    @abc.abstractmethod
+    def get_instance_cpus(self, instance_simulation):
+        raise NotImplementedError(self.NOT_IMPLEMENTED_MSG)
+
     def get_provider_id(self):
         return self.id
 
@@ -57,7 +64,7 @@ class Provider:
                 orphaned_instances.append(instance)
         return running_instances, orphaned_instances
 
-    def modify_and_run_instance(self, launch_dto):
+    def prepare_instance_env(self, launch_dto):
         # START modifying the running server, setup nfs mount, snap collector, some ENV variables and
         # start the simulation
 
@@ -69,9 +76,8 @@ class Provider:
 
         print("Mounting NFS")
         nfs_address = self.nfs_address
-        simulation_instance_case_folder = "/case"
         utils.mount_instance_case_folder(instance_api, nfs_address, launch_dto.simulation_instance,
-                                         simulation_instance_case_folder)
+                                         SIMULATION_INSTANCE_CASE_FOLDER)
 
         print "\t\tsetting up the execution environment"
 
@@ -82,22 +88,54 @@ class Provider:
         requests.post("%s/env/TENANT" % instance_api, data={"val": env['OS_TENANT_NAME']})
         requests.post("%s/env/WM_PROJECT_DIR" % instance_api, data={"val": '/openfoam'})
 
+        requests.post("%s/env/LD_LIBRARY_PATH" % instance_api, data={"val": '/usr/bin/'})
+        requests.post("%s/env/PATH" % instance_api, data={"val": '/usr/bin/'})
+
+        requests.post("%s/env/MPI_BUFFER_SIZE" % instance_api, data={"val": '1000000'})
+
         self.start_snap_collector(launch_dto)
 
-        print "Starting OpenFOAM simulations"
-        solver_so = capstan_utils.get_solver_so(launch_dto.simulation_instance.simulation.solver)
-        solver_command = "/usr/bin/%s -case %s" % (solver_so, simulation_instance_case_folder)
-        req = requests.put("%s/app/" % instance_api, data={"command": solver_command}, timeout=30)
+        if launch_dto.simulation_instance.multicore:
+            # if we plan running on multiple cpus run decomposePar first
+            decompose_command = "/usr/bin/decomposePar -case %s" % SIMULATION_INSTANCE_CASE_FOLDER
+            launch_dto.simulation_instance.status = Instance.Status.DECOMPOSING.name
+            req = requests.put("%s/app/" % instance_api, data={"command": decompose_command}, timeout=30)
+            # strip double quotes, because request returns '"200"' which fails when parsing to int
+            launch_dto.simulation_instance.thread_id = int(req.text.strip('"'))
+        else:
+            launch_dto.simulation_instance.status = Instance.Status.READY.name
 
-        # if request to /app successful it will return id of the openfoam thread, if not it should fail
-        # strip double quotes, because request returns '"200"' which fails when parsing to int
-        launch_dto.simulation_instance.thread_id = int(req.text.strip('"'))
-        launch_dto.simulation_instance.status = Instance.Status.RUNNING.name
         launch_dto.simulation_instance.save()
         launch_dto.simulation_instance.simulation.status = Simulation.Status.RUNNING.name
         launch_dto.simulation_instance.simulation.save()
 
         return launch_dto
+
+    def run_simulation(self, simulation_instance):
+        print "Starting OpenFOAM simulations"
+        instance_api = utils.rest_api_for(simulation_instance.ip)
+        solver_so = capstan_utils.get_solver_so(simulation_instance.simulation.solver)
+
+        if simulation_instance.multicore:
+            solver_command = "/usr/bin/mpirun -n %d --allow-run-as-root /usr/bin/%s -parallel -case %s" % (
+                simulation_instance.parallelisation, solver_so, SIMULATION_INSTANCE_CASE_FOLDER)
+            simulation_instance.status = Instance.Status.RUNNING_MPI.name
+        else:
+            solver_command = "/usr/bin/%s -case %s" % (solver_so, SIMULATION_INSTANCE_CASE_FOLDER)
+            simulation_instance.status = Instance.Status.RUNNING.name
+
+        print 'Sending request with solver command: %s' % solver_command
+        req = requests.put("%s/app/" % instance_api, data={"command": solver_command}, timeout=30)
+        simulation_instance.thread_id = int(req.text.strip('"'))
+        simulation_instance.save()
+
+    def run_reconstruction(self, simulation_instance):
+        instance_api = utils.rest_api_for(simulation_instance.ip)
+        reconstruct_command = "/usr/bin/reconstructPar -case %s" % SIMULATION_INSTANCE_CASE_FOLDER
+        req = requests.put("%s/app/" % instance_api, data={"command": reconstruct_command}, timeout=30)
+        simulation_instance.thread_id = int(req.text.strip('"'))
+        simulation_instance.status = Instance.Status.RECONSTRUCTING.name
+        simulation_instance.save()
 
     def start_snap_collector(self, simulation_launch_dto):
         try:
