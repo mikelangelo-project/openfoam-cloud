@@ -29,7 +29,7 @@ def create_openfoam_task(target_ip):
                     "/intel": {
                         "swagIP": target_ip,
                         "swagPort": 8000,
-                        "swagFile": "%2Fcase%2Frun.log?op=GET"
+                        "swagFile": "%2Frun.log?op=GET"
                     }
                 },
                 "process": [
