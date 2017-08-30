@@ -20,7 +20,6 @@ def init_and_compose_capstan_package(simulation_name, capstan_package_folder, so
     # Invoke capstan tool.
     p = Popen(cmd)
     p.wait()
-    os.chdir(capstan_package_folder)
     image_name = "temp/%s" % (os.path.basename(capstan_package_folder))
     # Now we are ready to compose the package into a VM
     p = Popen([
@@ -28,7 +27,7 @@ def init_and_compose_capstan_package(simulation_name, capstan_package_folder, so
         "--size", "500M",
         "--run", "--redirect=>>/run.log /cli/cli.so",
         "--pull-missing",
-        image_name])
+        image_name], cwd=capstan_package_folder)
     # Wait for the image to be built.
     p.wait()
     return image_name
