@@ -11,3 +11,6 @@ __pycache__/
 
 ofcloud/db.sqlite3
 ofcloud/ofcloud/local_settings.py
+
+# Virtual environment
+virtual_env/
