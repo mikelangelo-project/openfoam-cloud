@@ -23,7 +23,6 @@ class InstanceSerializer(serializers.ModelSerializer):
             'local_case_location',
             'nfs_case_location',
             'retry_attempts',
-
             'grafana_url',
             'download_case_url'
         )
@@ -54,6 +53,6 @@ class SimulationSerializer(serializers.ModelSerializer):
             'input_data_object',
             'cases',
             'status',
-
-            'instances'
+            'instances',
+            'decomposition'
         )

@@ -1,3 +1,4 @@
+import json
 import os
 import os.path
 import re
@@ -9,6 +10,36 @@ from os import path
 import boto
 import boto.s3.connection
 from django.conf import settings
+
+# Replacements dict defines keywords in decomposeParDict template to be replaced with the corresponding value
+# from decompose_dict, which is generated from the form inputs in horizon-openfoam dashboard.
+# First level defines the decomposition method used. In each dictionary entry there are mappings defined as:
+# "{template_keyword}" : ("decompose_dict_field", optional)
+# If a template keyword is found in the decomposeParDict template file it is replaced with the value of field
+# 'decompose_dict_field' in decompose_dict. If the field is marked as optional, it will be uncommented in
+# the final decomposeParDict
+DECOMPOSE_PAR_DICT_REPLACEMENTS = {
+    "simple": {
+        "{number_of_subdomains}": ("subdomains", False),
+        "{coeffs_n}": ("n", False),
+        "{coeffs_delta}": ("delta", False),
+    },
+    "hierarchical": {
+        "{number_of_subdomains}": ("subdomains", False),
+        "{coeffs_n}": ("n", False),
+        "{coeffs_delta}": ("delta", False),
+        "{coeffs_order}": ("order", False)
+    },
+    "scotch": {
+        "{number_of_subdomains}": ("subdomains", False),
+        "{coeffs_processor_weights}": ("processor_weights", True),
+        "{coeffs_strategy}": ("strategy", True)
+    },
+    "manual": {
+        "{number_of_subdomains}": ("subdomains", False),
+        "{coeffs_datafile}": ("datafile", False)
+    }
+}
 
 
 def prepare_case_files(simulation, instance_cpus):
@@ -39,12 +70,23 @@ def prepare_case_files(simulation, instance_cpus):
 
     # If any parallelisation, use the corresponding decomposeParDict
     if instance_cpus > 1:
+        decomposition_dict = json.loads(simulation.decomposition)
+        decomposition_method = decomposition_dict['decomposition_method']
+
         decompose_par_dict_path = path.join(case_path, "system/decomposeParDict")
         os.remove(decompose_par_dict_path)
-        shutil.copyfile(
-            "ofcloud/templates/decomposeParDict_%scpu" % instance_cpus,
-            decompose_par_dict_path
-        )
+
+        with open("ofcloud/templates/decomposeParDict_%s" % decomposition_method, ) as infile, open(
+                decompose_par_dict_path, "w") as outfile:
+            for line in infile:
+                for src, target in DECOMPOSE_PAR_DICT_REPLACEMENTS[decomposition_method].iteritems():
+                    # if the parameter is defined as optional we have to remove comment annotations from those lines
+                    is_optional = target[1]
+                    target = decomposition_dict[target[0]]
+                    line = line.replace(str(src), str(target))
+                    if is_optional and len(target) > 0:
+                        line = line.replace("//", "")
+                outfile.write(line)
     return case_folder
 
 

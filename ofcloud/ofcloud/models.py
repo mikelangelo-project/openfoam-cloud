@@ -38,6 +38,7 @@ class Simulation(models.Model):
     cases = models.TextField(blank=True)
 
     status = models.CharField(max_length=100, default=Status.PENDING.name)
+    decomposition = models.TextField(blank=True)
 
 
 class Instance(models.Model):
