@@ -1,43 +1,58 @@
-# OpenFOAM Cloud Backend
+OpenFOAM Cloud Backend
+======================
 
-## Installing from GitHub
+Installing from GitHub
+----------------------
 
 Clone the repository
+
+::
 
     git clone https://github.com/mikelangelo-project/openfoam-cloud.git
 
 Install required Python packages
 
+::
+
     pip install -r requirements.txt
 
-## Installing via pip
+Installing via pip
+------------------
+
+::
 
     pip install openfoam-cloud
 
-## Setup
+Setup
+-----
 
 Install the following required packages
 
-* [capstan](https://drive.google.com/drive/folders/0B4qi_kpom5ITZ0RCYUlFQUJhUVU)
-* [snap](https://drive.google.com/drive/folders/0B4rwCneIeHMybmlENDNPYXJ3c3M)
-* grafana: `sudo apt-get install grafana`
-* influxdb: `sudo apt-get install influxdb`
+-  `capstan <https://drive.google.com/drive/folders/0B4qi_kpom5ITZ0RCYUlFQUJhUVU>`__
+-  `snap <https://drive.google.com/drive/folders/0B4rwCneIeHMybmlENDNPYXJ3c3M>`__
+-  grafana: ``sudo apt-get install grafana``
+-  influxdb: ``sudo apt-get install influxdb``
 
 Copy local settings
 
+::
+
     cp ofcloud/ofcloud/local_settings.py{.example,}
 
-Edit local settings to reflect your environment. Where you see os.environ['ENV_VARIABLE_NAME'] you have to export the
-desired value to your environment.
+Edit local settings to reflect your environment. Where you see
+os.environ['ENV\_VARIABLE\_NAME'] you have to export the desired value
+to your environment.
+
+::
 
     OPENFOAM_BASENAME       = 'http://openfoam.example.com'
     GRAFANA_BASENAME        = 'http://grafana.example.com'
- 
+
     S3_ACCESS_KEY_ID        = os.environ['S3_ACCESS_KEY_ID']
     S3_SECRET_ACCESS_KEY    = os.environ['S3_SECRET_ACCESS_KEY']
     S3_HOST                 = 's3-host'
     S3_PORT                 = 8443
- 
+
     SNAP_SERVICE            = 'snap-api-root'
     INFLUX_DB_HOST          = 'influxdb-host'
     INFLUX_DB_PORT          = 8086
@@ -81,27 +96,33 @@ desired value to your environment.
     # If this setting value is higher than nova's max instance quota, the latter will be respected.
     OPENFOAM_MAX_INSTANCE_USAGE = 8
 
+Running
+-------
 
-## Running
+Ensure snap, influxdb and grafana are running. Define a datasource for
+influxdb in grafana.
 
-Ensure snap, influxdb and grafana are running. Define a datasource for influxdb
-in grafana.
-
-* snap: `/opt/snap/bin/snapd -t 0 -a /opt/snap/plugin`
-* influxdb: `/etc/init.d/influxdb start`
-* grafana: `/etc/init.d/grafana-server start`
+-  snap: ``/opt/snap/bin/snapd -t 0 -a /opt/snap/plugin``
+-  influxdb: ``/etc/init.d/influxdb start``
+-  grafana: ``/etc/init.d/grafana-server start``
 
 Then launch the OpenFOAM backend
+
+::
 
     python manage.py runserver 0.0.0.0:8008
 
 Next launch the OpenFOAM scheduler daemon
 
+::
+
     python manage.py runscheduler
 
-## Acknowledgements
+Acknowledgements
+----------------
 
-This project has been conducted within the RIA [MIKELANGELO
-project](https://www.mikelangelo-project.eu) (no.  645402), started in January
-2015, and co-funded by the European Commission under the H2020-ICT- 07-2014:
-Advanced Cloud Infrastructures and Services programme.
+This project has been conducted within the RIA `MIKELANGELO
+project <https://www.mikelangelo-project.eu>`__ (no. 645402), started in
+January 2015, and co-funded by the European Commission under the
+H2020-ICT- 07-2014: Advanced Cloud Infrastructures and Services
+programme.

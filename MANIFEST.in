@@ -1,0 +1,7 @@
+include ofcloud/ofcloud/local_settings.py.example
+exclude ofcloud/ofcloud/local_settings.py
+
+include LICENSE
+include README.rst
+
+recursive-include ofcloud/ofcloud/templates *
