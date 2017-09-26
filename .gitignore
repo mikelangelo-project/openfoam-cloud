@@ -14,3 +14,12 @@ ofcloud/ofcloud/local_settings.py
 
 # Virtual environment
 virtual_env/
+
+# setup.py generated files
+bin/
+build/
+dist/
+include/
+lib/
+local/
+openfoam_cloud.egg-info/
