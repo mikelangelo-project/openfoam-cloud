@@ -2,6 +2,7 @@ import os
 import signal
 import threading
 import time
+import traceback
 from importlib import import_module
 
 import daemon
@@ -162,17 +163,39 @@ def __poll_for_run(simulation_providers):
         instance_provider[0].run_simulation(ready_instance)
 
 
+def __kill_and_wait(pid):
+    os.kill(pid, signal.SIGTERM)
+    i = 0
+    while True:
+        try:
+            time.sleep(1)
+            os.kill(pid, signal.SIG_DFL)
+            i += 1
+            # sometimes the process does not go down gracefully, try to kill it every 10 seconds
+            if i % 10 == 0:
+                os.kill(pid, signal.SIGKILL)
+        except OSError:
+            return
+
+
 def run(sleep_interval):
     pidfile = daemon.pidfile.PIDLockFile(path="/tmp/scheduler_daemon.pid")
 
     if pidfile.is_locked():
-        print("Killing previous scheduler_daemon instance (pid = %s)" % pidfile.read_pid())
-        os.kill(pidfile.read_pid(), signal.SIGTERM)
+        print "Existing lock file found"
+        try:
+            os.kill(pidfile.read_pid(), signal.SIG_DFL)
+            print "An instance of scheduler daemon is already running. If you wish to restart, use the 'restart' " \
+                  "command"
+            return
+        except:
+            pidfile.break_lock()
 
     now_seconds = str(time.time())
     stdout = open("/tmp/scheduler_daemon_%s.log" % now_seconds, "w+")
     stderr = open("/tmp/scheduler_daemon_error_%s.log" % now_seconds, "w+")
 
+    print "Running scheduler daemon with refresh interval of %s seconds" % sleep_interval
     daemon_context = daemon.DaemonContext(stdout=stdout,
                                           stderr=stderr,
                                           detach_process=True,
@@ -185,8 +208,33 @@ def run(sleep_interval):
 
 def shutdown():
     pidfile = daemon.pidfile.PIDLockFile(path="/tmp/scheduler_daemon.pid")
+    if pidfile.is_locked():
+        pid = pidfile.read_pid()
+        try:
+            os.kill(pid, signal.SIG_DFL)
+        except OSError:
+            print "There doesn't seem to be any instance of scheduler daemon running but the lock file exists"
+            print "Breaking lock file"
+            pidfile.break_lock()
+            return 0
 
-    pid = pidfile.read_pid()
-    print "Shutting down scheduler daemon with pid %d" % pid
-    os.kill(pid, signal.SIGTERM)
-    print "Scheduler daemon (%d) successfully terminated" % pid
+        try:
+            print "Shutting down scheduler daemon (%d)" % pid
+            __kill_and_wait(pid)
+            pidfile.break_lock()
+            print "Scheduler daemon (%d) successfully terminated" % pid
+            return 1
+        except OSError:
+            print traceback.format_exc()
+    else:
+        print "There doesn't seem to be any instance of scheduler daemon running"
+        return 0
+
+
+def restart(sleep_interval):
+    print "Restarting scheduler daemon with refresh interval of %s seconds" % sleep_interval
+    shutdown_status = shutdown()
+    if shutdown_status == 1:
+        run(sleep_interval)
+    else:
+        print "To start a new instance use the 'runscheduler' command"

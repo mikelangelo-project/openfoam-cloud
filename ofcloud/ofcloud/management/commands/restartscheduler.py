@@ -2,17 +2,17 @@ import os
 import traceback
 
 from django.conf import settings
-from django.core.management.base import BaseCommand
+from django.core.management import BaseCommand
 
 from ofcloud import scheduler_daemon
 
 
-def run_scheduler():
-    scheduler_daemon.run(settings.SCHEDULER_REFRESH_INTERVAL_SECONDS)
+def restart_scheduler():
+    scheduler_daemon.restart(settings.SCHEDULER_REFRESH_INTERVAL_SECONDS)
 
 
 class Command(BaseCommand):
-    help = 'Starts the OpenFOAM cloud simulation scheduler daemon'
+    help = 'Restarts the OpenFOAM cloud simulation scheduler daemon'
 
     def add_arguments(self, parser):
         pass
@@ -20,6 +20,6 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         try:
             os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ofcloud.settings")
-            run_scheduler()
+            restart_scheduler()
         except:
             print traceback.format_exc()
