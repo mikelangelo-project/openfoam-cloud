@@ -143,6 +143,6 @@ class Provider:
             t = snap_api.create_openfoam_task(simulation_launch_dto.simulation_instance.ip)
             simulation_launch_dto.simulation_instance.snap_task_id = t
             print "\ttask id %s" % t
-        except requests.ConnectionError, requests.Timeout:
+        except requests.RequestException:
             print traceback.format_exc()
-            print "Snap collector request timed out. Simulation will be ran despite this error."
+            print "Snap collector could not be started. Simulation will be ran despite this error."
