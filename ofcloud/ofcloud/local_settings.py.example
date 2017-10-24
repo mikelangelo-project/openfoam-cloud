@@ -1,5 +1,8 @@
 import os
 
+# Your django secret key. You can generate one here: https://www.miniwebtool.com/django-secret-key-generator/
+SECRET_KEY              = 'your-django-secret-key'
+
 OPENFOAM_BASENAME       = 'http://openfoam.example.com'
 GRAFANA_BASENAME        = 'http://grafana.example.com'
 
