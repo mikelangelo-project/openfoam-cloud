@@ -140,9 +140,12 @@ class Provider:
             simulation_instance.status = Instance.Status.RUNNING.name
 
         print 'Sending request with solver command: %s' % solver_command
-        req = requests.put("%s/app/" % instance_api, data={"command": solver_command}, timeout=30)
-        simulation_instance.thread_id = int(req.text.strip('"'))
-        simulation_instance.save()
+        try:
+            req = requests.put("%s/app/" % instance_api, data={"command": solver_command}, timeout=30)
+            simulation_instance.thread_id = int(req.text.strip('"'))
+            simulation_instance.save()
+        except requests.ConnectionError:
+            simulation_instance.status = Instance.Status.FAILED.name
 
     def run_reconstruction(self, simulation_instance):
         instance_api = utils.rest_api_for(simulation_instance.ip)

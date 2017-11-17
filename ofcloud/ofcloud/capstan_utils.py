@@ -40,7 +40,7 @@ def init_and_compose_capstan_package(simulation_name, capstan_package_folder, so
     p = Popen([
         "capstan", "package", "compose",
         "--size", "500M",
-        "--run", "--redirect=>>/run.log /cli/cli.so",
+       "--run", "--redirect=>>/run.log /bin/sleep.so -1",
         "--pull-missing",
         image_name], cwd=capstan_package_folder)
     # Wait for the image to be built.
@@ -50,7 +50,7 @@ def init_and_compose_capstan_package(simulation_name, capstan_package_folder, so
 
 def get_solver_deps(solver):
     solver_deps, _ = __get_solver_config()[solver]
-    return solver_deps + __get_common_deps()
+    return __get_common_deps() + solver_deps
 
 
 def get_solver_so(solver):
@@ -85,7 +85,7 @@ def __get_solver_config():
 
 def __get_common_deps():
     return [
-        "osv.cli",
+        "osv.httpserver-api",
         "osv.nfs",
         "ompi-1.10"
     ]
